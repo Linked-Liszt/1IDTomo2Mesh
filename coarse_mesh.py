@@ -30,6 +30,10 @@ def parse_args():
 
 
 def find_voids_coarse(config, output_prefix):
+    if not os.path.exists(output_prefix):
+        os.mkdir(output_prefix)
+
+
     prefix = config['img_dir']
     start_file = config['img_range'][0]
     end_file = config['img_range'][1]
@@ -44,6 +48,9 @@ def find_voids_coarse(config, output_prefix):
         im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)
+
+    if len(projs) != len(omega):
+        raise ValueError("Number of projections and omegas are not equal!")
 
     b=4
     b_K = 4
