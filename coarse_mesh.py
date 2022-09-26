@@ -21,11 +21,15 @@ def parse_args():
         'config_fp', 
         help='path to the config .json describing scan data'
     )
+    parser.add_argument(
+        'output_fp', 
+        help='path to place output file'
+    )
 
     return parser.parse_args()
 
 
-def find_voids_coarse(config):
+def find_voids_coarse(config, output_prefix):
     prefix = config['img_dir']
     start_file = config['img_range'][0]
     end_file = config['img_range'][1]
@@ -49,7 +53,8 @@ def find_voids_coarse(config):
     # Insert Filtering Here
 
     voids_b.export_void_mesh_mproc("sizes", edge_thresh=0).write_ply(
-        f"working_dir/{config['img_prefix']}_{config['img_range'][0]}_{config['img_range'][1]}.ply")
+        os.path.join(output_prefix, 
+        f"{config['img_prefix']}_{config['img_range'][0]}_{config['img_range'][1]}.ply"))
 
 
 if __name__ == '__main__':
@@ -57,4 +62,4 @@ if __name__ == '__main__':
     with open(args.config_fp, 'r') as config_f:
         config = json.load(config_f)
 
-    find_voids_coarse(config)
+    find_voids_coarse(config, args.output_fp)
