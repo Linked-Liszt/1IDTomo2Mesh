@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument(
         '--i',
         action='store_true',
-        help='override image prefix'
+        help='enable this flag for interactive mode'
     )
     return parser.parse_args()
 
