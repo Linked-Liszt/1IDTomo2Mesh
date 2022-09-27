@@ -4,6 +4,9 @@ import json
 import os
 import copy
 import argparse
+from tqdm import tqdm
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 from tomo2mesh.projects.steel_am.coarse2fine import coarse_map, process_subset
 from tomo2mesh.misc.voxel_processing import TimerGPU
@@ -42,7 +45,7 @@ def find_voids_coarse(config, output_prefix):
     omega = omega / 180 * np.pi # NOTE: Why 1pi and not 2pi
 
     projs = []
-    for im_idx in range(start_file, end_file + 1):
+    for im_idx in tqdm(range(start_file, end_file + 1), desc='Loading imgs'):
         im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx:06d}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)

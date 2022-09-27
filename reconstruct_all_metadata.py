@@ -24,6 +24,11 @@ def parse_args():
         '--pfx',
         help='override image prefix'
     )
+    parser.add_argument(
+        '--i',
+        action='store_true',
+        help='override image prefix'
+    )
     return parser.parse_args()
 
 
@@ -119,6 +124,54 @@ def extract_scan_data(metadata_fp):
                 img_range = [0, 0]
     return scans
 
+
+def execute_coarse_map(config):
+    config['omega'] = config['omega'].tolist()
+
+    num_omegas = len(config['omega'])
+    num_imgs = config['img_range'][1] - config['img_range'][0] + 1 
+    if num_imgs != num_omegas:
+        raise ValueError(f"Number of detected omegas {num_omegas} and images {num_imgs} not equal!")
+
+    config_fp = os.path.join(args.output_fp, 'cur_config.json')
+    with open(config_fp, 'w') as curr_conf_f:
+        json.dump(config, curr_conf_f)
+    map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
+    
+    return map_proc.returncode
+
+
+def interactive_mode(scans):
+    commands = ('Commands: "[int]" run scan on specified range | "l": list scan ranges'
+                '\n          "c": print commands | "q": quit program')
+    scan_txt = '\n'.join([f"[{i}]: {scan['img_range']}" for i, scan in enumerate(scans)])
+    input_line = 'Enter Command: '
+
+    print(scan_txt)
+    print(commands)
+    while True:
+        user_input = input(input_line)
+        if user_input.strip() == 'c':
+            print(commands)
+        elif user_input.strip() == 'l':
+            print(scan_txt)
+        elif user_input.strip() == 'q':
+            return
+        else:
+            try:
+                scan_idx = int(user_input)
+            except ValueError:
+                print("Unknown command or int!")
+            else:
+                if scan_idx < 0 or scan_idx > len(scans) - 1:
+                    print('Invalid scan index. Choose one within number of scans.')
+                else:
+                    print(f"Running Scan {scans[scan_idx]['img_range']}")
+                    ret_code = execute_coarse_map(scans[scan_idx])
+                    if ret_code != 0:
+                        print("Warning: Coarse scan exited with non-zero return code!")
+        
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -127,23 +180,19 @@ if __name__ == '__main__':
     if not os.path.exists(args.output_fp):
         os.mkdir(args.output_fp)
 
-    for scan in scans:
-        print(f"{scan['img_range']}")
+    if not args.i:
+        for scan in scans:
+            print(f"{scan['img_range']}")
 
-    error_scans = []
-    for i, config in enumerate(scans):
-        config['omega'] = config['omega'].tolist()
+    if args.i:
+        interactive_mode(scans)
+    else:
+        error_scans = []
+        for i, config in enumerate(scans):
+            ret_code = execute_coarse_map(config)
+            if ret_code != 0:
+                error_scans.append(str(config['img_range']))
 
-        num_omegas = len(config['omega'])
-        num_imgs = config['img_range'][1] - config['img_range'][0] + 1 
-        if num_imgs != num_omegas:
-            raise ValueError(f"Number of detected omegas {num_omegas} and images {num_imgs} not equal!")
-
-        config_fp = os.path.join(args.output_fp, 'cur_config.json')
-        with open(config_fp, 'w') as curr_conf_f:
-            json.dump(config, curr_conf_f)
-        map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
-        if map_proc.returncode != 0:
-            error_scans.append(str(config['img_range']))
-
-        print(f'Finished scan {i + 1}/{len(scans)}')
+            print(f'Finished scan {i + 1}/{len(scans)}')
+        
+        print(f'Scans with errors: {str(error_scans)}')
