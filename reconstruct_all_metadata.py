@@ -2,14 +2,50 @@ import json
 import subprocess #Need to clean up GPU memory after execution so forced to restart interpreter
 import numpy as np
 import argparse
+import os
 
-def find_omegas(dat_lines, start_idx, end_idx, entry_line):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Script to course-map voids from a series of scans as defined by a metadata file in 1ID format'
+    )
+    parser.add_argument(
+        'metadata_fp', 
+        help='path to the scan metadata to be reconstructed'
+    )
+    parser.add_argument(
+        'output_fp', 
+        help='path to place output file'
+    )
+    parser.add_argument(
+        '--p',
+        help='override image path'
+    )
+    parser.add_argument(
+        '--pfx',
+        help='override image prefix'
+    )
+    return parser.parse_args()
+
+
+def find_img_data(dat_lines, 
+                  scan_range,
+                  entry_line, 
+                  override_path=False, 
+                  override_pfx=False):
     METADATA_LINE_LEN = 51 
     SCAN_ID_IDX = 7
     OMEGA_IDX = 31
+    PATH_LEN = 6
+    IMG_PFX_LEN = 14
+
+    start_idx = scan_range[0]
+    end_idx = scan_range[1]
 
     omegas = np.zeros(end_idx - start_idx + 1)
     found_omegas = np.zeros(end_idx - start_idx + 1)
+
+    path = None
+    img_pfx = None
 
     for i in range(entry_line, 0, -1):
         line = dat_lines[i].split(' ')
@@ -24,78 +60,90 @@ def find_omegas(dat_lines, start_idx, end_idx, entry_line):
                 omegas[store_idx] = float(line[OMEGA_IDX])
                 found_omegas[store_idx] = True
 
+        elif dat_lines[i].startswith('Path:'):
+            path = dat_lines[i][PATH_LEN:].strip()
+        
+        elif dat_lines[i].startswith('Image prefix:'):
+            img_pfx = dat_lines[i][IMG_PFX_LEN:].strip()
+
+
     if not np.all(found_omegas):
-        raise ValueError(f"Unable to find all omegas for given scan range {start_idx}-{end_idx}")    
+        raise ValueError(f"Unable to find all omegas for given scan range {start_idx}-{end_idx}")
     
-    return omegas
+    if path is None and not override_path:
+        raise ValueError(f"Unable to find image path. Please check metadata file structure.")
+    
+    if img_pfx is None and not override_pfx:
+        raise ValueError(f"Unable to find image prefixes. Please check metadata file structure.")
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='Script to course-map voids from a series of scans as defined by a metadata file in 1ID format'
-    )
-    parser.add_argument(
-        'metadata_fp', 
-        help='path to the scan metadata to be reconstructed'
-    )
-    parser.add_argument(
-        'output_fp', 
-        help='path to place output file'
-    )
-    return parser.parse_args()
+    return omegas, path, img_pfx
 
-if __name__ == '__main__':
+
+def extract_scan_data(metadata_fp):
     scans = []
     NUM_FIELD_BEGIN = 10
     NUM_FIELD_END = 20
 
-    args = parse_args()
-
-
-    with open(args.metadata_fp) as dat_f:
+    with open(metadata_fp) as dat_f:
         read_counter = 0
         cur_scan = {}
+        img_range = [0, 0]
         dat_lines = dat_f.readlines()
 
+        override_path = args.p is not None
+        override_pfx = args.pfx is not None
         for i, line in enumerate(dat_lines):
             if line.startswith('End'):
                 read_counter = 2
             elif read_counter == 2:
                 read_counter -= 1
-                cur_scan['start'] = int(line.split(' ')[4].strip()) + NUM_FIELD_BEGIN
+                img_range[0] = int(line.split(' ')[4].strip()) + NUM_FIELD_BEGIN
             elif read_counter == 1:
                 read_counter -= 1
-                cur_scan['end'] = int(line.split(' ')[4].strip()) - NUM_FIELD_END
-                cur_scan['omega'] = find_omegas(dat_lines, 
-                                                cur_scan['start'],
-                                                cur_scan['end'],
-                                                i)
+                img_range[1] = int(line.split(' ')[4].strip()) - NUM_FIELD_END
+
+                omega, path, img_pfx = find_img_data(dat_lines, 
+                                                     img_range, 
+                                                     i,
+                                                     override_path,
+                                                     override_pfx)
+                cur_scan['img_range'] = img_range
+                cur_scan['omega'] = omega
+                if override_path: path = args.p
+                cur_scan['img_dir'] = path 
+                if override_pfx: img_pfx = args.pfx
+                cur_scan['img_prefix'] = img_pfx
+
                 scans.append(cur_scan)
                 cur_scan = {}
-                
+                img_range = [0, 0]
+    return scans
 
-    with open('working_dir/config.json', 'r') as config_f:
-        config = json.load(config_f)
+if __name__ == '__main__':
+    args = parse_args()
+
+    scans = extract_scan_data(args.metadata_fp)
+                
+    if not os.path.exists(args.output_fp):
+        os.mkdir(args.output_fp)
 
     for scan in scans:
-        print(f"{scan['start'], scan['end']}")
-
-    
+        print(f"{scan['img_range']}")
 
     error_scans = []
-    for i, scan in enumerate(scans):
-        config['img_range'] = [scan['start'], scan['end']]
-        config['omega'] = scan['omega'].tolist()
-        assert scan['end'] - scan['start'] + 1 == len(config['omega'])
+    for i, config in enumerate(scans):
+        config['omega'] = config['omega'].tolist()
 
-        curr_config_fp = 'working_dir/temp_all_config.json'
-        with open(curr_config_fp, 'w') as curr_conf_f:
+        num_omegas = len(config['omega'])
+        num_imgs = config['img_range'][1] - config['img_range'][0] + 1 
+        if num_imgs != num_omegas:
+            raise ValueError(f"Number of detected omegas {num_omegas} and images {num_imgs} not equal!")
+
+        config_fp = os.path.join(args.output_fp, 'cur_config.json')
+        with open(config_fp, 'w') as curr_conf_f:
             json.dump(config, curr_conf_f)
-        map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{curr_config_fp}', args.output_fp])
+        map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
         if map_proc.returncode != 0:
-            error_scans.append(f"{scan['start']}-{scan['end']}")
+            error_scans.append(str(config['img_range']))
 
         print(f'Finished scan {i + 1}/{len(scans)}')
-
-
-
-

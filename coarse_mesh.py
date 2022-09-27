@@ -33,11 +33,9 @@ def find_voids_coarse(config, output_prefix):
     if not os.path.exists(output_prefix):
         os.mkdir(output_prefix)
 
-
     prefix = config['img_dir']
     start_file = config['img_range'][0]
     end_file = config['img_range'][1]
-    center = config['center']
     omega = np.asarray(config['omega'])
 
     omega = np.asarray(config['omega'])
@@ -45,9 +43,15 @@ def find_voids_coarse(config, output_prefix):
 
     projs = []
     for im_idx in range(start_file, end_file + 1):
-        im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx}.tif'))
+        im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx:06d}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)
+
+    if 'center' not in config:
+        print(f'Assuming image is centered...')
+        center = projs.shape[-1]/2.0 # assuming that object is perfectly centered
+    else:
+        center = config['center']
 
     if len(projs) != len(omega):
         raise ValueError("Number of projections and omegas are not equal!")
