@@ -80,6 +80,10 @@ def find_img_data(dat_lines,
     
     if img_pfx is None and not override_pfx:
         raise ValueError(f"Unable to find image prefixes. Please check metadata file structure.")
+    
+    pfx_split = os.path.split(img_pfx)
+    path = os.path.join(path, pfx_split[0])
+    img_pfx = pfx_split[1]
 
     return omegas, path, img_pfx
 
