@@ -130,7 +130,8 @@ def extract_scan_data(metadata_fp):
 
 
 def execute_coarse_map(config):
-    config['omega'] = config['omega'].tolist()
+    if type(config['omega']) is not list:
+        config['omega'] = config['omega'].tolist()
 
     num_omegas = len(config['omega'])
     num_imgs = config['img_range'][1] - config['img_range'][0] + 1 
@@ -140,7 +141,7 @@ def execute_coarse_map(config):
     config_fp = os.path.join(args.output_fp, 'cur_config.json')
     with open(config_fp, 'w') as curr_conf_f:
         json.dump(config, curr_conf_f)
-    map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
+    map_proc = subprocess.run(['python', 'model_mesh.py', f'{config_fp}', args.output_fp])
     
     return map_proc.returncode
 

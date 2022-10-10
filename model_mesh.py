@@ -7,6 +7,8 @@ import os
 import copy
 import argparse
 from tqdm import tqdm
+import cupy as cp
+
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
@@ -67,8 +69,30 @@ def find_voids_coarse(config, output_prefix):
     voids_b = coarse_map(projs, omega, center, b, b_K, 2)
 
     # Insert Filtering Here
+    pixel_size = 2.34
+    voids_b.select_by_size(80, pixel_size, sel_type="geq")
 
-    voids_b.export_void_mesh_mproc("sizes", edge_thresh=0).write_ply(
+    model_tag = 'M_a07'
+    model_names = {'segmenter': "segmenter_Unet_M_a07"}
+    model_path = '/home/phoebus/MPRINCE/Models/tomo2mesh'
+    wd = 4
+
+    model_params = get_model_params(model_tag)
+    segmenter = SurfaceSegmenter(model_initialization = 'load-model', \
+                            model_names = model_names, \
+                            model_path = model_path)
+
+    p_voids, r_fac = voids_b.export_grid(wd)
+    print('grid')
+    cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()        
+    # process subset reconstruction
+    x_voids, p_voids = process_subset(projs, omega, center, segmenter, p_voids, voids_b["rec_min_max"])
+    
+    # import voids data from subset reconstruction
+    voids = Voids().import_from_grid(voids_b, x_voids, p_voids)
+
+
+    voids.export_void_mesh_mproc("sizes", edge_thresh=0).write_ply(
         os.path.join(output_prefix, 
         f"{config['img_prefix']}_{config['img_range'][0]}_{config['img_range'][1]}.ply"))
 
