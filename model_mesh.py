@@ -85,12 +85,11 @@ def find_voids_coarse(config, output_prefix):
 
     model_tag = 'M_a07'
     model_names = {'segmenter': "segmenter_Unet_M_a07"}
-    model_path = '/home/phoebus/MPRINCE/Models/tomo2mesh'
 
     model_params = get_model_params(model_tag)
     segmenter = SurfaceSegmenter(model_initialization = 'load-model', \
                             model_names = model_names, \
-                            model_path = model_path)
+                            model_path = config['mesh_settings']['model_path'])
 
     print('Finished grid export...')
     # process subset reconstruction

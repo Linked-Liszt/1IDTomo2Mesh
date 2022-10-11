@@ -17,6 +17,10 @@ def parse_args():
         help='path to place output file'
     )
     parser.add_argument(
+        'model_path', 
+        help='path to segmentation models'
+    )
+    parser.add_argument(
         '--p',
         help='override image path'
     )
@@ -220,6 +224,7 @@ if __name__ == '__main__':
     scans = extract_scan_data(args.metadata_fp)
     
     settings = {
+        'model_path': args.model_path,
         'sf': args.sf,
         'vs': args.vs,
         'ps': args.ps
