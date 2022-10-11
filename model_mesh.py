@@ -68,20 +68,17 @@ def find_voids_coarse(config, output_prefix):
     if len(projs) != len(omega):
         raise ValueError("Number of projections and omegas are not equal!")
 
-
-    factor = 4
-
-    b=factor
-    b_K = factor
-    wd = factor
-
+    
+    scaling_factor = config['mesh_settings']['sf']
+    b=scaling_factor
+    b_K = scaling_factor
+    wd = scaling_factor
 
     cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()
     voids_b = coarse_map(projs, omega, center, b, b_K, 2)
 
     # Insert Filtering Here
-    pixel_size = 2.34
-    voids_b.select_by_size(20, pixel_size, sel_type="geq")
+    voids_b.select_by_size(config['mesh_settings']['vs'], config['mesh_settings']['ps'], sel_type="geq")
 
     p_voids, r_fac = voids_b.export_grid(wd)
     cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()        
