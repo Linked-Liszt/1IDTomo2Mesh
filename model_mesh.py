@@ -8,9 +8,9 @@ import copy
 import argparse
 from tqdm import tqdm
 import cupy as cp
+import pickle
 
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 from tomo2mesh.projects.steel_am.coarse2fine import coarse_map, process_subset
 from tomo2mesh.misc.voxel_processing import TimerGPU
@@ -18,6 +18,11 @@ from tomo2mesh.structures.voids import Voids
 from tomo2mesh.porosity.params_3dunet import *
 from tomo2mesh.unet3d.surface_segmenter import SurfaceSegmenter
 from tomo2mesh.fbp.recon import recon_slice, recon_binned, recon_all
+
+import tensorflow as tf
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+  tf.config.experimental.set_memory_growth(gpu, True)
 
 
 def parse_args():
@@ -63,28 +68,34 @@ def find_voids_coarse(config, output_prefix):
     if len(projs) != len(omega):
         raise ValueError("Number of projections and omegas are not equal!")
 
-    b=4
-    b_K = 4
 
+    factor = 4
+
+    b=factor
+    b_K = factor
+    wd = factor
+
+
+    cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()
     voids_b = coarse_map(projs, omega, center, b, b_K, 2)
 
     # Insert Filtering Here
     pixel_size = 2.34
-    voids_b.select_by_size(80, pixel_size, sel_type="geq")
+    voids_b.select_by_size(20, pixel_size, sel_type="geq")
+
+    p_voids, r_fac = voids_b.export_grid(wd)
+    cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()        
 
     model_tag = 'M_a07'
     model_names = {'segmenter': "segmenter_Unet_M_a07"}
     model_path = '/home/phoebus/MPRINCE/Models/tomo2mesh'
-    wd = 4
 
     model_params = get_model_params(model_tag)
     segmenter = SurfaceSegmenter(model_initialization = 'load-model', \
                             model_names = model_names, \
                             model_path = model_path)
 
-    p_voids, r_fac = voids_b.export_grid(wd)
-    print('grid')
-    cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()        
+    print('Finished grid export...')
     # process subset reconstruction
     x_voids, p_voids = process_subset(projs, omega, center, segmenter, p_voids, voids_b["rec_min_max"])
     
@@ -95,7 +106,6 @@ def find_voids_coarse(config, output_prefix):
     voids.export_void_mesh_mproc("sizes", edge_thresh=0).write_ply(
         os.path.join(output_prefix, 
         f"{config['img_prefix']}_{config['img_range'][0]}_{config['img_range'][1]}.ply"))
-
 
 if __name__ == '__main__':
     args = parse_args()
