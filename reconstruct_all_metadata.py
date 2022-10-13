@@ -17,6 +17,10 @@ def parse_args():
         help='path to place output file'
     )
     parser.add_argument(
+        'model_path', 
+        help='path to segmentation models'
+    )
+    parser.add_argument(
         '--p',
         help='override image path'
     )
@@ -28,6 +32,24 @@ def parse_args():
         '--i',
         action='store_true',
         help='enable this flag for interactive mode'
+    )
+    parser.add_argument(
+        '--sf',
+        type=int,
+        default=16,
+        help='scaling factor (higher is more coarse)'
+    )
+    parser.add_argument(
+        '--vs',
+        type=float,
+        default=20.00,
+        help='minimum void size (um) to select'
+    )
+    parser.add_argument(
+        '--ps',
+        type=float,
+        default=2.34,
+        help='pixel size (um) of detector'
     )
     return parser.parse_args()
 
@@ -129,8 +151,11 @@ def extract_scan_data(metadata_fp):
     return scans
 
 
-def execute_coarse_map(config):
-    config['omega'] = config['omega'].tolist()
+def execute_coarse_map(config, settings):
+    if type(config['omega']) is not list:
+        config['omega'] = config['omega'].tolist()
+    
+    config['mesh_settings'] = settings
 
     num_omegas = len(config['omega'])
     num_imgs = config['img_range'][1] - config['img_range'][0] + 1 
@@ -140,14 +165,23 @@ def execute_coarse_map(config):
     config_fp = os.path.join(args.output_fp, 'cur_config.json')
     with open(config_fp, 'w') as curr_conf_f:
         json.dump(config, curr_conf_f)
-    map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
+    map_proc = subprocess.run(['python', 'model_mesh.py', f'{config_fp}', args.output_fp])
     
     return map_proc.returncode
 
 
-def interactive_mode(scans):
-    commands = ('Commands: "[int]" run scan on specified range | "l": list scan ranges'
-                '\n          "c": print commands | "q": quit program')
+def try_change_setting(in_str, type, setting, settings):
+    try:
+        settings[setting] = type(in_str)
+        print(f'Set {setting} to {settings[setting]}')
+    except Exception:
+        print(f"Unable to parse {in_str}!")
+
+def interactive_mode(scans, settings):
+    commands = ('Commands: "[int]" run scan on range  | "l": list scan ranges' +
+                '\n         "c": print commands        | "q": quit program ' +
+                '\n         "sf [int]": scaling factor | "vs [float]": void size' +
+                '\n         "ps [float]": pixel size   | "s": print settings')
     scan_txt = '\n'.join([f"[{i}]: {scan['img_range']}" for i, scan in enumerate(scans)])
     input_line = 'Enter Command: '
 
@@ -159,6 +193,14 @@ def interactive_mode(scans):
             print(commands)
         elif user_input.strip() == 'l':
             print(scan_txt)
+        elif user_input.strip().startswith('sf'):
+            try_change_setting(user_input.strip()[3:], int, 'sf', settings)
+        elif user_input.strip().startswith('vs'):
+            try_change_setting(user_input.strip()[3:], float, 'vs', settings)
+        elif user_input.strip().startswith('ps'):
+            try_change_setting(user_input.strip()[3:], float, 'ps', settings)
+        elif user_input.strip() == 's':
+            print(settings)
         elif user_input.strip() == 'q':
             return
         else:
@@ -171,15 +213,22 @@ def interactive_mode(scans):
                     print('Invalid scan index. Choose one within number of scans.')
                 else:
                     print(f"Running Scan {scans[scan_idx]['img_range']}")
-                    ret_code = execute_coarse_map(scans[scan_idx])
+                    ret_code = execute_coarse_map(scans[scan_idx], settings)
                     if ret_code != 0:
                         print("Warning: Coarse scan exited with non-zero return code!")
-        
+
 
 if __name__ == '__main__':
     args = parse_args()
 
     scans = extract_scan_data(args.metadata_fp)
+    
+    settings = {
+        'model_path': args.model_path,
+        'sf': args.sf,
+        'vs': args.vs,
+        'ps': args.ps
+    }
                 
     if not os.path.exists(args.output_fp):
         os.mkdir(args.output_fp)
@@ -189,11 +238,11 @@ if __name__ == '__main__':
             print(f"{scan['img_range']}")
 
     if args.i:
-        interactive_mode(scans)
+        interactive_mode(scans, settings)
     else:
         error_scans = []
         for i, config in enumerate(scans):
-            ret_code = execute_coarse_map(config)
+            ret_code = execute_coarse_map(config, settings)
             if ret_code != 0:
                 error_scans.append(str(config['img_range']))
 
