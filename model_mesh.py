@@ -20,10 +20,14 @@ from tomo2mesh.unet3d.surface_segmenter import SurfaceSegmenter
 from tomo2mesh.fbp.recon import recon_slice, recon_binned, recon_all
 
 import tensorflow as tf
+
+tf.config.experimental.set_visible_devices([], 'GPU')
+"""
+TODO: Reenable once env issues fixed
 gpus = tf.config.experimental.list_physical_devices('GPU')
 for gpu in gpus:
   tf.config.experimental.set_memory_growth(gpu, True)
-
+"""
 
 def parse_args():
     parser = argparse.ArgumentParser(
