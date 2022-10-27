@@ -4,11 +4,10 @@ import numpy as np
 from PIL import Image
 import json
 import os
-import copy
 import argparse
 from tqdm import tqdm
 import cupy as cp
-import pickle
+import math
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
@@ -45,6 +44,20 @@ def parse_args():
     return parser.parse_args()
 
 
+def crop_projs(projs, scaling_factor, wd):
+    CROP_IDXS = [0, 2]
+    crop_edges = []
+    for crop_idx in CROP_IDXS:
+        stage_1_crop = projs.shape[crop_idx] - (projs.shape[crop_idx] % scaling_factor)
+        offset_x = (math.ceil(stage_1_crop / scaling_factor)) % (wd // scaling_factor)
+        crop_edges.append(stage_1_crop - (offset_x * scaling_factor))
+
+    original_shape = projs.shape
+    projs = projs[:crop_edges[0], :,:crop_edges[1]]
+    print(f'Auto-Cropped from {original_shape} to {projs.shape}')
+    return projs
+
+
 def find_voids_coarse(config, output_prefix):
     if not os.path.exists(output_prefix):
         os.mkdir(output_prefix)
@@ -57,14 +70,18 @@ def find_voids_coarse(config, output_prefix):
     omega = np.asarray(config['omega'])
     omega = omega / 180 * np.pi # NOTE: Why 1pi and not 2pi
 
+    scaling_factor = config['mesh_settings']['sf']
+    b=scaling_factor
+    b_K = scaling_factor
+    wd = scaling_factor
+
     projs = []
     for im_idx in tqdm(range(start_file, end_file + 1), desc='Loading imgs'):
         im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx:06d}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)
     projs = projs.swapaxes(0,1)
-    # TODO: Dynamic Reshaping
-    projs = projs[:1120, :,:]
+    projs = crop_projs(projs, scaling_factor, wd)
 
 
     if 'center' not in config:
@@ -77,10 +94,6 @@ def find_voids_coarse(config, output_prefix):
         raise ValueError("Number of projections and omegas are not equal!")
 
     
-    scaling_factor = config['mesh_settings']['sf']
-    b=scaling_factor
-    b_K = scaling_factor
-    wd = scaling_factor
 
     cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()
     voids_b = coarse_map(projs, omega, center, b, b_K, 2)
