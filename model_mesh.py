@@ -10,7 +10,7 @@ from tqdm import tqdm
 import cupy as cp
 import pickle
 
-#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 from tomo2mesh.projects.steel_am.coarse2fine import coarse_map, process_subset
 from tomo2mesh.misc.voxel_processing import TimerGPU
@@ -62,6 +62,10 @@ def find_voids_coarse(config, output_prefix):
         im = Image.open(os.path.join(prefix, config['img_prefix'] + f'_{im_idx:06d}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)
+    projs = projs.swapaxes(0,1)
+    # TODO: Dynamic Reshaping
+    projs = projs[:1120, :,:]
+
 
     if 'center' not in config:
         print(f'Assuming image is centered...')
@@ -69,7 +73,7 @@ def find_voids_coarse(config, output_prefix):
     else:
         center = config['center']
 
-    if len(projs) != len(omega):
+    if projs.shape[1] != len(omega):
         raise ValueError("Number of projections and omegas are not equal!")
 
     
