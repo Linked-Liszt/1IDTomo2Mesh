@@ -9,6 +9,7 @@ from tqdm import tqdm
 import cupy as cp
 import math
 
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 from tomo2mesh.projects.steel_am.coarse2fine import coarse_map, process_subset
@@ -97,6 +98,10 @@ def find_voids_coarse(config, output_prefix):
 
     cp._default_memory_pool.free_all_blocks(); cp.fft.config.get_plan_cache().clear()
     voids_b = coarse_map(projs, omega, center, b, b_K, 2)
+
+    voids_b.export_void_mesh_mproc("sizes", edge_thresh=0).write_ply(
+        os.path.join(output_prefix, 
+        f"{config['img_prefix']}_{config['img_range'][0]}_{config['img_range'][1]}_coarse.ply"))
 
     # Insert Filtering Here
     voids_b.select_by_size(config['mesh_settings']['vs'], config['mesh_settings']['ps'], sel_type="geq")

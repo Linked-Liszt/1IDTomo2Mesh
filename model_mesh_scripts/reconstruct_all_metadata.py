@@ -165,7 +165,7 @@ def execute_coarse_map(config, settings):
     config_fp = os.path.join(args.output_fp, 'cur_config.json')
     with open(config_fp, 'w') as curr_conf_f:
         json.dump(config, curr_conf_f)
-    map_proc = subprocess.run(['python', 'model_mesh.py', f'{config_fp}', args.output_fp])
+    map_proc = subprocess.run(['python', 'coarse_mesh.py', f'{config_fp}', args.output_fp])
     
     return map_proc.returncode
 

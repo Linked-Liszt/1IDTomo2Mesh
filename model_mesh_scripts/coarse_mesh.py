@@ -18,12 +18,6 @@ from tomo2mesh.porosity.params_3dunet import *
 from tomo2mesh.unet3d.surface_segmenter import SurfaceSegmenter
 from tomo2mesh.fbp.recon import recon_slice, recon_binned, recon_all
 
-import cupy as cp
-import tomo2mesh.fbp.subset as subset
-import cupyx.scipy as cpsp
-import tomo2mesh.misc.voxel_processing as vp
-import skimage.filters as filters
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -40,40 +34,6 @@ def parse_args():
 
     return parser.parse_args()
 
-def coarse_map(projs, theta, center, b, b_K, dust_thresh):
-    t_gpu = TimerGPU("secs")
-    memory_pool = cp.cuda.MemoryPool()
-    cp.cuda.set_allocator(memory_pool.malloc)
-
-    # fbp
-    t_gpu.tic()
-    raw_data = projs[::b,::b_K,::b], theta[::b_K,...], center/b
-    # V = cp.empty((nz,n,n), dtype = cp.float32)
-    V = subset.recon_all_gpu(*raw_data)
-    V[:] = cpsp.ndimage.gaussian_filter(V,0.5)
-    
-    # binarize
-    voxel_values = vp.get_values_cyl_mask(V[::2,::2,::2], 1.0).get()
-    rec_min_max = vp.modified_autocontrast(voxel_values, s=0.01)
-    thresh = cp.float32(filters.threshold_otsu(voxel_values))    
-    V[:] = (V<thresh).astype(cp.uint8)
-    vp.cylindrical_mask(V,0.95,1)
-    t_rec = t_gpu.toc('COARSE RECON')
-
-    # connected components labeling
-    t_gpu.tic()
-    V = cp.array(V, dtype = cp.uint32)
-    V[:], n_det = cpsp.ndimage.label(V,structure = cp.ones((3,3,3),dtype=cp.uint8))    
-    
-    voids_b = Voids().count_voids(V.get(), b, dust_thresh, pad_bb = 2)    
-    t_label = t_gpu.toc('LABELING')
-    
-    voids_b["rec_min_max"] = rec_min_max
-    voids_b.compute_time = {"reconstruction" : t_rec, "labeling" : t_label}
-
-    del V
-    memory_pool.free_all_blocks()    
-    return voids_b
 
 def find_voids_coarse(config, output_prefix):
     if not os.path.exists(output_prefix):

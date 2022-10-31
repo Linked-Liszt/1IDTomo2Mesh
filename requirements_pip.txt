@@ -1,6 +1,6 @@
 tensorflow==2.8
 protobuf==3.20.0
-git+https://github.com/Linked-Liszt/Tomo2Mesh.git@a034ba14c5781ee4bdc202b31fa258fedfd39cff
+git+https://github.com/Linked-Liszt/Tomo2Mesh.git@b2bcc3930112be30177501a3ba4414e1e6d028e6
 connected-components-3d
 pymesh
 configparse
