@@ -16,6 +16,11 @@ class ScanData():
     img_dir: str
     img_prefix: str
 
+"""
+==========================================
+Processing Functions
+==========================================
+"""
 
 def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
     """
@@ -101,21 +106,67 @@ def load_images(scan_data: ScanData):
     return projs
 
 
-def reconstruct(projs, omega, center, pixel_ds, scan_ds, num_gpu_batches):
-    memory_pool = cupy.cuda.MemoryPool()
-    cupy.cuda.set_allocator(memory_pool.malloc)
+def reconstruct(projs, omega, center, pixel_ds, scan_ds, gpu_batch_size):
+    """
+    Performs reconstruction from projections and angles
+    on GPU.
 
+    Params:
+        projs: stack of projections. Shape: (x,depth,y)
+
+        omega: stack of angles for projection images Shape (depth)
+
+        center: int, center pixel value of the sample
+
+        pixel_ds: pixel downsampling factor. Subsamples skipping this many pixels 
+            in both dims
+        
+        scan_ds: scan downsampling factor. Subsamples skipping this many frames
+
+        gpu_batch_size: number of frames to process simultaneously. Reduce this to
+            save memory, but increase processing time
+    
+    Returns: 
+        reconstruction: reconstructed images. Shape: (stack,x,y)
+    """
     raw_data = projs[::pixel_ds,::scan_ds,::pixel_ds], omega[::scan_ds,...], center/pixel_ds
-    return subset.recon_all(*raw_data, num_gpu_batches)
+    recon = subset.recon_all(*raw_data, gpu_batch_size)
+    return recon
 
+
+"""
+==========================================
+Plotting & Printing Functions
+==========================================
+"""
 
 def plot_recon_compare(original, processed, recon_slice):
-    fig, ax = plt.subplots(1, 2, figsize=(15,5))
-    ax[0].imshow(original[recon_slice])
+    fig, ax = plt.subplots(1, 2, figsize=(30,10))
+    pos0 = ax[0].imshow(original[recon_slice])
+    fig.colorbar(pos0, ax=ax[0])
     ax[0].set_title('Orignal')
-    ax[1].imshow(processed[recon_slice])
+    pos1 = ax[1].imshow(processed[recon_slice])
+    fig.colorbar(pos1, ax=ax[1])
     ax[1].set_title('Post Processsing')
     return fig
+
+
+def plot_recon(original, recon_slice):
+    fig, ax = plt.subplots(1, 1, figsize=(10,10))
+    pos0 = ax.imshow(original[recon_slice])
+    fig.colorbar(pos0, ax=ax)
+    return fig
+
+
+def print_avail_scans(scans: List[ScanData]):
+    print('\n'.join([f"[{i}]: {scan.img_range}" for i, scan in enumerate(scans)]))
+
+
+"""
+==========================================
+Internal processing functions
+==========================================
+"""
 
 def _find_img_data(dat_lines, 
                   scan_range,
@@ -173,5 +224,3 @@ def _find_img_data(dat_lines,
     return omegas, path, img_pfx
 
 
-def print_avail_scans(scans: List[ScanData]):
-    print('\n'.join([f"[{i}]: {scan.img_range}" for i, scan in enumerate(scans)]))
