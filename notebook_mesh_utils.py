@@ -130,6 +130,7 @@ def reconstruct(projs, omega, center, pixel_ds, scan_ds, gpu_batch_size):
         reconstruction: reconstructed images. Shape: (stack,x,y)
     """
     raw_data = projs[::pixel_ds,::scan_ds,::pixel_ds], omega[::scan_ds,...], center/pixel_ds
+    print(raw_data[0].shape)
     recon = subset.recon_all(*raw_data, gpu_batch_size)
     return recon
 
@@ -154,6 +155,12 @@ def plot_recon_compare(original, processed, recon_slice):
 def plot_recon(original, recon_slice):
     fig, ax = plt.subplots(1, 1, figsize=(10,10))
     pos0 = ax.imshow(original[recon_slice])
+    fig.colorbar(pos0, ax=ax)
+    return fig
+
+def plot_proj(original, proj_slice):
+    fig, ax = plt.subplots(1, 1, figsize=(10,10))
+    pos0 = ax.imshow(original[:, proj_slice, :])
     fig.colorbar(pos0, ax=ax)
     return fig
 
