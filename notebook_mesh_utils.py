@@ -10,11 +10,18 @@ import cupy
 import tomo2mesh.fbp.subset as subset
 
 @dataclasses.dataclass
-class ScanData():
+class ScanMetaData():
     img_range: List[int]
     omega: np.ndarray
     img_dir: str
     img_prefix: str
+
+@dataclasses.dataclass
+class ScanData():
+    projs: np.ndarray
+    omega: np.ndarray
+    dark_fields: np.ndarray
+    white_fields: np.ndarray
 
 """
 ==========================================
@@ -25,7 +32,7 @@ Processing Functions
 def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
     """
     Reads the specified metadata file and produces 
-    a list of ScanData for each scan in the file
+    a list of ScanMetaData for each scan in the file
 
     Params:
         metadata_fp: path to the metadata file
@@ -37,16 +44,13 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
             image format was changed after the metadata file was created
         
     Returns:
-        List of ScanData objects contained in the metadata file
+        List of ScanMetaData objects contained in the metadata file
     """
     scans = []
-    NUM_FIELD_BEGIN = 10
-    NUM_FIELD_END = 20
 
     with open(metadata_fp) as dat_f:
         read_counter = 0
         cur_scan = {}
-        img_range = [0, 0]
         dat_lines = dat_f.readlines()
 
         is_override_path = override_path is not None
@@ -55,11 +59,12 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
             if line.startswith('End'):
                 read_counter = 2
             elif read_counter == 2:
+                img_range = [0, 0]
                 read_counter -= 1
-                img_range[0] = int(line.split(' ')[4].strip()) + NUM_FIELD_BEGIN
+                img_range[0] = int(line.split(' ')[4].strip()) 
             elif read_counter == 1:
                 read_counter -= 1
-                img_range[1] = int(line.split(' ')[4].strip()) - NUM_FIELD_END
+                img_range[1] = int(line.split(' ')[4].strip()) 
 
                 omega, path, img_pfx = _find_img_data(dat_lines, 
                                                      img_range, 
@@ -69,17 +74,18 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
                 if is_override_path: path = override_path
                 if is_override_pfx: img_pfx = override_pfx
 
-                scans.append(ScanData(img_range, omega, path, img_pfx))
+                scans.append(ScanMetaData(img_range, omega, path, img_pfx))
     return scans
 
 
-def load_images(scan_data: ScanData):
+def load_images(scan_data: ScanMetaData, num_dark_white: int) -> ScanData:
+    # TODO: WF/DF Loading automatic 
     """
     Loads images from disk into memory from a scan_data 
     object extracted from the metadata file.
 
     Params:
-        scan_data: ScanData object pointing to a series of scans
+        scan_data: ScanMetaData object pointing to a series of scans
     
     Returns:
         projs: stack of projections in shape (x, scan_num, y)
@@ -98,15 +104,29 @@ def load_images(scan_data: ScanData):
         im = Image.open(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif'))
         projs.append(np.array(im))
     projs = np.stack(projs)
+
+    # Assume Wite, Projs, White, Dark
+    if num_dark_white != 0:
+        dark = projs[-num_dark_white:]
+        white = np.concatenate((projs[:num_dark_white], projs[-num_dark_white * 2 : -num_dark_white]), axis=0)
+        projs = projs[num_dark_white:-num_dark_white * 2]
+    else:
+        dark = np.expand_dims(np.ones(projs.shape[1:]), axis=0)
+        white = np.expand_dims(np.ones(projs.shape[1:]), axis=0)
+
+
     projs = projs.swapaxes(0,1)
+    dark = dark.swapaxes(0,1)
+    white = white.swapaxes(0,1)
+
 
     if projs.shape[1] != len(omega):
         raise ValueError("Number of projections and omegas are not equal!")
     
-    return projs
+    return ScanData(projs, omega, dark, white)
 
 
-def reconstruct(projs, omega, center, pixel_ds, scan_ds, gpu_batch_size):
+def reconstruct(scan_data: ScanData, center, pixel_ds, scan_ds, gpu_batch_size):
     """
     Performs reconstruction from projections and angles
     on GPU.
@@ -129,10 +149,26 @@ def reconstruct(projs, omega, center, pixel_ds, scan_ds, gpu_batch_size):
     Returns: 
         reconstruction: reconstructed images. Shape: (stack,x,y)
     """
-    raw_data = projs[::pixel_ds,::scan_ds,::pixel_ds], omega[::scan_ds,...], center/pixel_ds
+    raw_data = scan_data.projs[::pixel_ds,::scan_ds,::pixel_ds], scan_data.omega[::scan_ds,...], center/pixel_ds
     print(raw_data[0].shape)
     recon = subset.recon_all(*raw_data, gpu_batch_size)
     return recon
+
+def norm_whitefield(scan_data: ScanData) -> ScanData:
+    """
+    Performs normalization by dividing the projections by
+    the average of all white fields. 
+
+    NOTE: REPLACES projs with normalized projs. This is a destructive action.
+
+    TODO: Accelerate with GPU
+    """
+    scan_data.projs = scan_data.projs.swapaxes(0, 1)
+    scan_data.white_fields= scan_data.white_fields.swapaxes(0, 1)
+    scan_data.projs = scan_data.projs / np.mean(scan_data.white_fields, axis=0) 
+    scan_data.projs = scan_data.projs.swapaxes(0, 1)
+    scan_data.white_fields= scan_data.white_fields.swapaxes(0, 1)
+    return scan_data
 
 
 """
@@ -152,20 +188,23 @@ def plot_recon_compare(original, processed, recon_slice):
     return fig
 
 
-def plot_recon(original, recon_slice):
+def plot_recon(original, recon_slice, color_range=None): # TODO: Add range to plots
     fig, ax = plt.subplots(1, 1, figsize=(10,10))
     pos0 = ax.imshow(original[recon_slice])
+    if color_range is not None:
+        pos0.set_clim(color_range[0], color_range[1])
     fig.colorbar(pos0, ax=ax)
     return fig
 
-def plot_proj(original, proj_slice):
+def plot_proj(original, proj_slice, color_range=None):
     fig, ax = plt.subplots(1, 1, figsize=(10,10))
     pos0 = ax.imshow(original[:, proj_slice, :])
+    if color_range is not None:
+        pos0.set_clim(color_range[0], color_range[1])
     fig.colorbar(pos0, ax=ax)
     return fig
 
-
-def print_avail_scans(scans: List[ScanData]):
+def print_avail_scans(scans: List[ScanMetaData]):
     print('\n'.join([f"[{i}]: {scan.img_range}" for i, scan in enumerate(scans)]))
 
 
@@ -180,6 +219,8 @@ def _find_img_data(dat_lines,
                   entry_line, 
                   override_path=False, 
                   override_pfx=False):
+    DARK_WHITE_COUNT = 30
+    WHITE_COUNT_BEGIN = 10
     METADATA_LINE_LEN = 51 
     SCAN_ID_IDX = 7
     OMEGA_IDX = 31
@@ -189,8 +230,8 @@ def _find_img_data(dat_lines,
     start_idx = scan_range[0]
     end_idx = scan_range[1]
 
-    omegas = np.zeros(end_idx - start_idx + 1)
-    found_omegas = np.zeros(end_idx - start_idx + 1)
+    omegas = np.zeros(end_idx - start_idx + 1 - DARK_WHITE_COUNT)
+    found_omegas = np.zeros(end_idx - start_idx + 1 - DARK_WHITE_COUNT)
 
     path = None
     img_pfx = None
@@ -204,7 +245,7 @@ def _find_img_data(dat_lines,
                 break
 
             if scan_num <= end_idx:
-                store_idx = scan_num - start_idx
+                store_idx = scan_num - start_idx - WHITE_COUNT_BEGIN
                 omegas[store_idx] = float(line[OMEGA_IDX])
                 found_omegas[store_idx] = True
 
@@ -213,7 +254,6 @@ def _find_img_data(dat_lines,
         
         elif dat_lines[i].startswith('Image prefix:'):
             img_pfx = dat_lines[i][IMG_PFX_LEN:].strip()
-
 
     if not np.all(found_omegas):
         raise ValueError(f"Unable to find all omegas for given scan range {start_idx}-{end_idx}")

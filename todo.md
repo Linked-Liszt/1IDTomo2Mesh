@@ -1,4 +1,0 @@
-- Convert .json to degree measurements
-- Clean up and document coarse mapping scripts
-- Document .json format once more solid
-- Apply ML model voids once model weights available.
