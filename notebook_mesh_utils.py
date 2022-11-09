@@ -22,6 +22,7 @@ class ScanData():
     omega: np.ndarray
     dark_fields: np.ndarray
     white_fields: np.ndarray
+    center: float = None
 
 """
 ==========================================
@@ -126,7 +127,7 @@ def load_images(scan_data: ScanMetaData, num_dark_white: int) -> ScanData:
     return ScanData(projs, omega, dark, white)
 
 
-def reconstruct(scan_data: ScanData, center, pixel_ds, scan_ds, gpu_batch_size):
+def reconstruct(scan_data: ScanData, gpu_batch_size):
     """
     Performs reconstruction from projections and angles
     on GPU.
@@ -138,21 +139,40 @@ def reconstruct(scan_data: ScanData, center, pixel_ds, scan_ds, gpu_batch_size):
 
         center: int, center pixel value of the sample
 
-        pixel_ds: pixel downsampling factor. Subsamples skipping this many pixels 
-            in both dims
-        
-        scan_ds: scan downsampling factor. Subsamples skipping this many frames
-
         gpu_batch_size: number of frames to process simultaneously. Reduce this to
             save memory, but increase processing time
     
     Returns: 
         reconstruction: reconstructed images. Shape: (stack,x,y)
     """
-    raw_data = scan_data.projs[::pixel_ds,::scan_ds,::pixel_ds], scan_data.omega[::scan_ds,...], center/pixel_ds
+    raw_data = scan_data.projs, scan_data.omega, scan_data.center
     print(raw_data[0].shape)
     recon = subset.recon_all(*raw_data, gpu_batch_size)
     return recon
+
+def downsample_scan(scan_data: ScanData, pixel_ds, scan_ds):
+    """
+    Downsamples a scan based on pixel and scan downsampling factors. 
+
+    Params:
+        scan_data: scan data to downsample NOTE: Destructive action
+
+        pixel_ds: pixel downsampling factor. Subsamples skipping this many pixels 
+            in both dims
+        
+        scan_ds: scan downsampling factor. Subsamples skipping this many frames
+    
+    return:
+        scan_data: downsampled scan
+    """
+    scan_data.projs = scan_data.projs[::pixel_ds,::scan_ds,::pixel_ds]
+    scan_data.omega = scan_data.omega[::scan_ds,...]
+    scan_data.dark_fields = scan_data.dark_fields[::pixel_ds,::scan_ds,::pixel_ds]
+    scan_data.white_fields = scan_data.white_fields[::pixel_ds,::scan_ds,::pixel_ds]
+    scan_data.center = scan_data.center / pixel_ds
+
+    return scan_data
+
 
 def norm_whitefield(scan_data: ScanData) -> ScanData:
     """
