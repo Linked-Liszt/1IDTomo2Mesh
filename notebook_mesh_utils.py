@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-
+import asyncio
+import datetime
 import cupy
 import tomo2mesh.fbp.subset as subset
 
@@ -79,8 +80,7 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
     return scans
 
 
-def load_images(scan_data: ScanMetaData, num_dark_white: int) -> ScanData:
-    # TODO: WF/DF Loading automatic 
+async def load_images(scan_data: ScanMetaData, num_dark_white: int, use_async=False) -> ScanData:
     """
     Loads images from disk into memory from a scan_data 
     object extracted from the metadata file.
@@ -100,11 +100,18 @@ def load_images(scan_data: ScanMetaData, num_dark_white: int) -> ScanData:
     omega = omega / 180 * np.pi # NOTE: Why 1pi and not 2pi
 
 
-    projs = []
-    for im_idx in tqdm(range(start_file, end_file + 1), desc='Loading Imgs'):
-        im = Image.open(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif'))
-        projs.append(np.array(im))
-    projs = np.stack(projs)
+    if use_async:
+        load_calls = []
+        for im_idx in range(start_file, end_file + 1):
+            load_calls.append(async_load_img(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif')))
+        projs = await asyncio.gather(*load_calls)
+        projs = np.stack(projs)
+    else:
+        projs = []
+        for im_idx in tqdm(range(start_file, end_file + 1), desc='Loading Imgs'):
+            im = Image.open(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif'))
+            projs.append(np.array(im))
+        projs = np.stack(projs)
 
     # Assume Wite, Projs, White, Dark
     if num_dark_white != 0:
@@ -125,6 +132,12 @@ def load_images(scan_data: ScanMetaData, num_dark_white: int) -> ScanData:
         raise ValueError("Number of projections and omegas are not equal!")
     
     return ScanData(projs, omega, dark, white)
+
+
+async def async_load_img(im_fp):
+    im = Image.open(os.path.join(im_fp))
+    return np.array(im)
+
 
 
 def reconstruct(scan_data: ScanData, gpu_batch_size):
@@ -233,7 +246,6 @@ def print_avail_scans(scans: List[ScanMetaData]):
 Internal processing functions
 ==========================================
 """
-
 def _find_img_data(dat_lines, 
                   scan_range,
                   entry_line, 
@@ -291,3 +303,8 @@ def _find_img_data(dat_lines,
     return omegas, path, img_pfx
 
 
+async def async_time_func(func, args=[], kwargs={}):
+    start_time = datetime.datetime.now()
+    result = await func(*args, **kwargs)
+    print(f'Elapsed Time: {(datetime.datetime.now() - start_time).total_seconds()}')
+    return result
