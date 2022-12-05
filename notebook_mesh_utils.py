@@ -7,7 +7,6 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import asyncio
 import datetime
-import cupy
 import tomo2mesh.fbp.subset as subset
 
 @dataclasses.dataclass
@@ -87,6 +86,11 @@ async def load_images(scan_data: ScanMetaData, num_dark_white: int, use_async=Fa
 
     Params:
         scan_data: ScanMetaData object pointing to a series of scans
+
+        num_dark_white: number of dark and white projections to extract, assumes 1x dark at the 
+            beginning and 2x white at the end
+
+        use_async: use asyncio loading. Set false for serial loading
     
     Returns:
         projs: stack of projections in shape (x, scan_num, y)
@@ -146,14 +150,7 @@ def reconstruct(scan_data: ScanData, gpu_batch_size):
     on GPU.
 
     Params:
-        projs: stack of projections. Shape: (x,depth,y)
-
-        omega: stack of angles for projection images Shape (depth)
-
-        center: int, center pixel value of the sample
-
-        gpu_batch_size: number of frames to process simultaneously. Reduce this to
-            save memory, but increase processing time
+        scan_data Scan data object containing projections and omegas. 
     
     Returns: 
         reconstruction: reconstructed images. Shape: (stack,x,y)
@@ -182,7 +179,8 @@ def downsample_scan(scan_data: ScanData, pixel_ds, scan_ds):
     scan_data.omega = scan_data.omega[::scan_ds,...]
     scan_data.dark_fields = scan_data.dark_fields[::pixel_ds,::scan_ds,::pixel_ds]
     scan_data.white_fields = scan_data.white_fields[::pixel_ds,::scan_ds,::pixel_ds]
-    scan_data.center = scan_data.center / pixel_ds
+    if scan_data.center is not None:
+        scan_data.center = scan_data.center / pixel_ds
 
     return scan_data
 
