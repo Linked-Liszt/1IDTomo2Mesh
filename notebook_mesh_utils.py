@@ -92,6 +92,8 @@ async def load_images(scan_data: ScanMetaData, num_dark_white: int, use_async=Fa
 
         use_async: use asyncio loading. Set false for serial loading
     
+    TODO: Loading from top to bottom
+    
     Returns:
         projs: stack of projections in shape (x, scan_num, y)
 
@@ -193,6 +195,11 @@ def norm_whitefield(scan_data: ScanData) -> ScanData:
     NOTE: REPLACES projs with normalized projs. This is a destructive action.
 
     TODO: Accelerate with GPU
+    
+    TODO: Average first 10, average last 10, 10, Interp & average for projections,
+        each frame of proj gets divided by interp
+        
+    TODO: DF correction: (proj-df / (wf-df)
     """
     scan_data.projs = scan_data.projs.swapaxes(0, 1)
     scan_data.white_fields= scan_data.white_fields.swapaxes(0, 1)
@@ -220,6 +227,7 @@ def plot_recon_compare(original, processed, recon_slice):
 
 
 def plot_recon(original, recon_slice, color_range=None): # TODO: Add range to plots
+    # TODO: Look for imagej alternative. Potentially custom GUI
     fig, ax = plt.subplots(1, 1, figsize=(10,10))
     pos0 = ax.imshow(original[recon_slice])
     if color_range is not None:
