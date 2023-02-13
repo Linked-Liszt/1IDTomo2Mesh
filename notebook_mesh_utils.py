@@ -79,7 +79,7 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
     return scans
 
 
-async def load_images(scan_data: ScanMetaData, num_dark_white: int, use_async=False) -> ScanData:
+def load_images(scan_data: ScanMetaData, num_dark_white: int, override_prog = None) -> ScanData:
     """
     Loads images from disk into memory from a scan_data 
     object extracted from the metadata file.
@@ -105,19 +105,16 @@ async def load_images(scan_data: ScanMetaData, num_dark_white: int, use_async=Fa
 
     omega = omega / 180 * np.pi # NOTE: Why 1pi and not 2pi
 
-
-    if use_async:
-        load_calls = []
-        for im_idx in range(start_file, end_file + 1):
-            load_calls.append(async_load_img(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif')))
-        projs = await asyncio.gather(*load_calls)
-        projs = np.stack(projs)
+    if override_prog is not None:
+        prog = override_prog.tqdm
     else:
-        projs = []
-        for im_idx in tqdm(range(start_file, end_file + 1), desc='Loading Imgs'):
-            im = Image.open(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif'))
-            projs.append(np.array(im))
-        projs = np.stack(projs)
+        prog = tqdm
+
+    projs = []
+    for im_idx in prog(range(start_file, end_file + 1), desc='Loading Imgs'):
+        im = Image.open(os.path.join(prefix, scan_data.img_prefix + f'_{im_idx:06d}.tif'))
+        projs.append(np.array(im))
+    projs = np.stack(projs)
 
     # Assume Wite, Projs, White, Dark
     if num_dark_white != 0:
