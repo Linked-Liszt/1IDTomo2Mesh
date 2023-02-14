@@ -27,6 +27,7 @@ class ReconUI:
         self.scan_drop = gr.Dropdown(label='Selected Scan', type='index')
         self.loaded_scans = None
         self.cur_projs = None
+        self.cur_recon = None
         self.crop = [0, 0, 0, 0]
 
     def get_avaliable_scans(self, metadata_fp, is_override, override_path):
@@ -49,7 +50,7 @@ class ReconUI:
         self.loaded_scans.projs = self.loaded_scans.projs.swapaxes(0,1)
         self.loaded_scans.dark_fields = self.loaded_scans.dark_fields.swapaxes(0,1)
         self.loaded_scans.white_fields = self.loaded_scans.white_fields.swapaxes(0,1)
-        return "Loaded", 
+        return "Loaded"
         
 
     def reload_reset_scans(self):
@@ -81,12 +82,44 @@ class ReconUI:
         return gr.Image.update(value=norm_im[self.crop[0]:self.crop[1], 
                                              self.crop[2]:self.crop[3]])
 
-    def norm_img(self, slide_value):
-        self.cur_projs.projs = tomopy.normalize(self.cur_projs.projs, self.cur_projs.white_fields, self.cur_projs.dark_fields)
-        print(self.cur_projs.projs.shape)
-        print(np.min(self.cur_projs.projs))
-        print(np.max(self.cur_projs.projs))
-        return self._render_im(slide_value)
+    def _render_recon(self, slide_value):
+        norm_im = self.cur_recon[slide_value]
+        norm_im /= np.max(np.abs(norm_im))
+        return gr.Image.update(value=norm_im)
+
+
+    def update_recon_slide(self, slide_value):
+        return self._render_recon(slide_value)
+
+
+    def reconstruct(self, slide_value, norm):
+        projs = self.cur_projs.projs[:, self.crop[0]:self.crop[1], 
+                                        self.crop[2]:self.crop[3]]
+        if norm  != 'None':
+            wf = self.cur_projs.white_fields[:, self.crop[0]:self.crop[1], 
+                                             self.crop[2]:self.crop[3]]
+            df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
+                                            self.crop[2]:self.crop[3]]
+
+            if norm == 'TomoPy':
+                projs = tomopy.normalize(projs, wf, df)
+            
+            elif norm == 'Basic':
+                projs = projs / wf.mean(axis=0)
+                            
+        projs = projs * 4
+        options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
+        center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2]
+        self.cur_recon = tomopy.recon(projs[:-1],
+                            self.cur_projs.omega[:-1],
+                            center=center,
+                            algorithm=tomopy.astra,
+                            options=options,
+                            ncore=20)
+
+        sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
+        return self._render_recon(slide_value), sl_update
+
 
     def main_interface(self):
         metadata_fp = '/home/beams/S1IDUSER/new_data/alshibli_nov22/F50_sp5_tomo/F50_sp5_tomo_TomoFastScan.dat'
@@ -106,13 +139,13 @@ class ReconUI:
                 load_txt = gr.Textbox(label='Loading Progress', interactive=False)
 
                 
-            with gr.Tab('Reconstruction'):
+            with gr.Tab('Projection'):
                 proj_img = gr.Image(label='Projection',
                                     image_mode="L",
-                                    interactive=False)
+                                interactive=False)
                 proj_slide = gr.Slider(label='Projection', interactive=True)
                 reset_proj_btn = gr.Button('RESET and Reload Projs')
-                
+            
                 with gr.Row():
                     proj_xs_num = gr.Number(label='X-Start', precision=0)
                     proj_xe_num = gr.Number(label='X-End', precision=0)
@@ -120,7 +153,16 @@ class ReconUI:
                     proj_ye_num = gr.Number(label='Y-End', precision=0)
 
                 proj_crop_btn = gr.Button('Crop Projections')
-                proj_norm_btn = gr.Button('Normalize Images (WARNING: NON-REVERSABLE)')
+        
+            with gr.Tab('Reconstruction'):
+                recon_img = gr.Image(label='Reconstruction',
+                                    image_mode="L",
+                                    interactive=False)
+                recon_slide = gr.Slider(label='Reconstruction', interactive=True)
+                norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Basic', 'None'], value='TomoPy')
+                recon_btn = gr.Button('Reconstruct')
+                recon_btn = gr.Button('Reconstruct')
+                
 
             # Functionality Loading Tab
             avail_scans = gr.State()
@@ -140,14 +182,14 @@ class ReconUI:
 
             # Functionality Recon Tab
             reset_proj_btn.click(fn=self.reload_reset_scans,
-                                 outputs=[proj_slide, proj_img,
-                                          proj_xs_num, proj_xe_num,
-                                          proj_ys_num, proj_ye_num]
+                                    outputs=[proj_slide, proj_img,
+                                            proj_xs_num, proj_xe_num,
+                                            proj_ys_num, proj_ye_num]
             )
 
             proj_slide.change(fn=self.update_proj_slide,
-                              inputs=proj_slide,
-                              outputs=proj_img)
+                                inputs=proj_slide,
+                                outputs=proj_img)
 
             proj_crop_btn.click(fn=self.crop_img,
                                 inputs=[proj_slide, 
@@ -156,9 +198,15 @@ class ReconUI:
                                 outputs=proj_img
             )
 
-            proj_norm_btn.click(fn=self.norm_img,
-                                inputs=proj_slide,
-                                outputs=proj_img)
+            # Recon Functionality
+
+            recon_slide.change(fn=self.update_recon_slide,
+                                inputs=recon_slide,
+                                outputs=recon_img)
+
+            recon_btn.click(fn=self.reconstruct,
+                                inputs=[recon_slide, norm_rdo],
+                                outputs=[recon_img, recon_slide])
 
 
         scan_if.queue(concurrency_count=3).launch()
@@ -169,7 +217,7 @@ if __name__ == '__main__':
 
 
 
-    """
+"""
 
 
 scan = scans[1]
@@ -204,11 +252,11 @@ adjusted = proj * 4 # increase contrast
 
 options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
 recon = tomopy.recon(adjusted[:-1],
-                     scan_data.omega[:-1],
-                     center=adjusted.shape[2]//2,
-                     algorithm=tomopy.astra,
-                     options=options,
-                     ncore=20)
+                    scan_data.omega[:-1],
+                    center=adjusted.shape[2]//2,
+                    algorithm=tomopy.astra,
+                    options=options,
+                    ncore=20)
 
 #recon_clipped = np.clip(recon, 0, 0.002)
 recon_clipped = recon
@@ -229,12 +277,12 @@ print(np.max(recon_clipped[0] * (254 / np.max(recon_clipped[0]))))
 
 # %%
 for layer_idx in range(recon_clipped.shape[0]):
-    norm = recon_clipped[layer_idx]
-    norm = norm + (0 - norm.min())
-    norm = norm * (254 / np.max(norm))
-    im = Image.fromarray(norm)
-    im = im.convert("L")
-    im.save(f'recon/{layer_idx:05d}.tiff')
+norm = recon_clipped[layer_idx]
+norm = norm + (0 - norm.min())
+norm = norm * (254 / np.max(norm))
+im = Image.fromarray(norm)
+im = im.convert("L")
+im.save(f'recon/{layer_idx:05d}.tiff')
 
 
 """
