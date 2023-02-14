@@ -26,6 +26,8 @@ class ReconUI:
     def init_shared_components(self):
         self.scan_drop = gr.Dropdown(label='Selected Scan', type='index')
         self.loaded_scans = None
+        self.cur_projs = None
+        self.crop = [0, 0, 0, 0]
 
     def get_avaliable_scans(self, metadata_fp, is_override, override_path):
         if is_override:
@@ -44,15 +46,54 @@ class ReconUI:
 
     def load_scan(self, scans, scan_idx, progress=gr.Progress(track_tqdm=True)):
         self.loaded_scans = nu.load_images(scans[scan_idx], 10)
-        return "Loaded"
+        self.loaded_scans.projs = self.loaded_scans.projs.swapaxes(0,1)
+        self.loaded_scans.dark_fields = self.loaded_scans.dark_fields.swapaxes(0,1)
+        self.loaded_scans.white_fields = self.loaded_scans.white_fields.swapaxes(0,1)
+        return "Loaded", 
         
+
+    def reload_reset_scans(self):
+        if self.loaded_scans is None:
+            raise ValueError("Scans not Loaded!")
+        else:
+            self.cur_projs = copy.deepcopy(self.loaded_scans)
+        sl_update = gr.Slider.update(minimum=0, maximum=self.cur_projs.projs.shape[0]-1, value=0, interactive=True)
+        xs_update = gr.Number.update(value=0)
+        xe_update = gr.Number.update(value=self.cur_projs.projs.shape[2])
+        ys_update = gr.Number.update(value=0)
+        ye_update = gr.Number.update(value=self.cur_projs.projs.shape[1])
+        self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
+        im_update = self._render_im(0)
+        return sl_update, im_update, xs_update, xe_update, ys_update, ye_update
+    
+    def update_proj_slide(self, slide_value):
+        return self._render_im(slide_value)
+
+
+    def crop_img(self, slide_value, start_x, end_x, start_y, end_y):
+        self.crop = [start_y, end_y, start_x, end_x]
+        return self._render_im(slide_value)
+
+    def _render_im(self, slide_value):
+        norm_im = self.cur_projs.projs[slide_value]
+        if norm_im.dtype is not np.dtype(np.uint16):
+            norm_im /= np.max(np.abs(norm_im))
+        return gr.Image.update(value=norm_im[self.crop[0]:self.crop[1], 
+                                             self.crop[2]:self.crop[3]])
+
+    def norm_img(self, slide_value):
+        self.cur_projs.projs = tomopy.normalize(self.cur_projs.projs, self.cur_projs.white_fields, self.cur_projs.dark_fields)
+        print(self.cur_projs.projs.shape)
+        print(np.min(self.cur_projs.projs))
+        print(np.max(self.cur_projs.projs))
+        return self._render_im(slide_value)
 
     def main_interface(self):
         metadata_fp = '/home/beams/S1IDUSER/new_data/alshibli_nov22/F50_sp5_tomo/F50_sp5_tomo_TomoFastScan.dat'
         override_path = '/home/beams/S1IDUSER/mnt/s1c/alshibli_nov22/tomo/F50_sp5_tomo'
 
         with gr.Blocks() as scan_if:
-            # Layout
+            # Loading Tab Layout
             with gr.Tab("Loading Data"):
                 metadata_fp_fld = gr.Textbox(label='Metadata File Path', value=metadata_fp)
                 override_ckbx = gr.Checkbox(label='Override File Path', value=True)
@@ -62,25 +103,62 @@ class ReconUI:
                 self.scan_drop.render()
 
                 load_scans_btn = gr.Button('Load Scans')
+                load_txt = gr.Textbox(label='Loading Progress', interactive=False)
 
-                # Functionality 
-                avail_scans = gr.State()
-                load_txt = gr.Textbox(label='Loading Area', interactive=False)
-
-                override_ckbx.change(fn=self.hide_override, 
-                                    inputs=override_ckbx, 
-                                    outputs=override_path_fld)
-
-                find_scans_btn.click(fn=self.get_avaliable_scans, 
-                                    inputs=[metadata_fp_fld, override_ckbx, override_path_fld], 
-                                    outputs=[self.scan_drop, avail_scans])
-
-                load_scans_btn.click(fn=self.load_scan, 
-                                    inputs=[avail_scans, self.scan_drop], 
-                                    outputs=load_txt,
-                                    )
                 
-            #with gr.Tab('Reconstruction'):
+            with gr.Tab('Reconstruction'):
+                proj_img = gr.Image(label='Projection',
+                                    image_mode="L",
+                                    interactive=False)
+                proj_slide = gr.Slider(label='Projection', interactive=True)
+                reset_proj_btn = gr.Button('RESET and Reload Projs')
+                
+                with gr.Row():
+                    proj_xs_num = gr.Number(label='X-Start', precision=0)
+                    proj_xe_num = gr.Number(label='X-End', precision=0)
+                    proj_ys_num = gr.Number(label='Y-Start', precision=0)
+                    proj_ye_num = gr.Number(label='Y-End', precision=0)
+
+                proj_crop_btn = gr.Button('Crop Projections')
+                proj_norm_btn = gr.Button('Normalize Images (WARNING: NON-REVERSABLE)')
+
+            # Functionality Loading Tab
+            avail_scans = gr.State()
+
+            override_ckbx.change(fn=self.hide_override, 
+                                inputs=override_ckbx, 
+                                outputs=override_path_fld)
+
+            find_scans_btn.click(fn=self.get_avaliable_scans, 
+                                inputs=[metadata_fp_fld, override_ckbx, override_path_fld], 
+                                outputs=[self.scan_drop, avail_scans])
+
+            load_scans_btn.click(fn=self.load_scan, 
+                                inputs=[avail_scans, self.scan_drop], 
+                                outputs=load_txt
+                                )
+
+            # Functionality Recon Tab
+            reset_proj_btn.click(fn=self.reload_reset_scans,
+                                 outputs=[proj_slide, proj_img,
+                                          proj_xs_num, proj_xe_num,
+                                          proj_ys_num, proj_ye_num]
+            )
+
+            proj_slide.change(fn=self.update_proj_slide,
+                              inputs=proj_slide,
+                              outputs=proj_img)
+
+            proj_crop_btn.click(fn=self.crop_img,
+                                inputs=[proj_slide, 
+                                        proj_xs_num, proj_xe_num,
+                                        proj_ys_num, proj_ye_num],
+                                outputs=proj_img
+            )
+
+            proj_norm_btn.click(fn=self.norm_img,
+                                inputs=proj_slide,
+                                outputs=proj_img)
 
 
         scan_if.queue(concurrency_count=3).launch()
@@ -105,9 +183,6 @@ print(scan_data.dark_fields.shape)
 print(scan_data.white_fields.shape)
 print(scan_data.omega.shape)
 
-scan_data.projs = scan_data.projs.swapaxes(0,1)
-scan_data.dark_fields = scan_data.dark_fields.swapaxes(0,1)
-scan_data.white_fields = scan_data.white_fields.swapaxes(0,1)
 
 nu.crop_projs(scan_data, [200, 1720])
 
