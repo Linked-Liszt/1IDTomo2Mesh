@@ -10,6 +10,7 @@ from PIL import Image
 import json
 import copy
 import argparse
+import io
 from tqdm import tqdm
 import notebook_mesh_utils as nu
 import matplotlib.pyplot as plt
@@ -22,13 +23,17 @@ class ReconUI:
         self.init_shared_components()
         self.main_interface()
 
-    # Workaround for combobox error
     def init_shared_components(self):
+        # Workaround for combobox error
         self.scan_drop = gr.Dropdown(label='Selected Scan', type='index')
         self.loaded_scans = None
         self.cur_projs = None
         self.cur_recon = None
         self.crop = [0, 0, 0, 0]
+        self.recon_is_clip = False
+        self.recon_clip = []
+        self.circ_crop = False
+        self.circ_ratio = 1.0
 
     def get_avaliable_scans(self, metadata_fp, is_override, override_path):
         if is_override:
@@ -64,18 +69,18 @@ class ReconUI:
         ys_update = gr.Number.update(value=0)
         ye_update = gr.Number.update(value=self.cur_projs.projs.shape[1])
         self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
-        im_update = self._render_im(0)
+        im_update = self._render_proj(0)
         return sl_update, im_update, xs_update, xe_update, ys_update, ye_update
     
     def update_proj_slide(self, slide_value):
-        return self._render_im(slide_value)
+        return self._render_proj(slide_value)
 
 
     def crop_img(self, slide_value, start_x, end_x, start_y, end_y):
         self.crop = [start_y, end_y, start_x, end_x]
-        return self._render_im(slide_value)
+        return self._render_proj(slide_value)
 
-    def _render_im(self, slide_value):
+    def _render_proj(self, slide_value):
         norm_im = self.cur_projs.projs[slide_value]
         if norm_im.dtype is not np.dtype(np.uint16):
             norm_im /= np.max(np.abs(norm_im))
@@ -84,8 +89,30 @@ class ReconUI:
 
     def _render_recon(self, slide_value):
         norm_im = self.cur_recon[slide_value]
+        if self.recon_is_clip:
+            norm_im = np.clip(norm_im, self.recon_clip[0], self.recon_clip[1])
+
+
+        fig, ax = plt.subplots(figsize=(15, 1.5))
+        ax.hist(norm_im.flatten(), bins=100)
+        ax.set_title("Pixel Distribution")
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf)
+        buf.seek(0)
+        hist_im = Image.open(buf)
+
+
+        width, height = hist_im.size
+        new_height = height + 100
+        pad_im = Image.new(hist_im.mode, (width, new_height), (255, 255, 255))
+        pad_im.paste(hist_im, (0, 50))
+
         norm_im /= np.max(np.abs(norm_im))
-        return gr.Image.update(value=norm_im)
+        # Decrease rendering size
+        pad = norm_im.shape[1] // 2
+        norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
+        return gr.Image.update(value=norm_im), gr.Image.update(value=hist_im)
 
 
     def update_recon_slide(self, slide_value):
@@ -93,6 +120,10 @@ class ReconUI:
 
 
     def reconstruct(self, slide_value, norm):
+        if self.cur_projs is None:
+            self.cur_projs = copy.deepcopy(self.loaded_scans)
+            self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
+
         projs = self.cur_projs.projs[:, self.crop[0]:self.crop[1], 
                                         self.crop[2]:self.crop[3]]
         if norm  != 'None':
@@ -104,7 +135,7 @@ class ReconUI:
             if norm == 'TomoPy':
                 projs = tomopy.normalize(projs, wf, df)
             
-            elif norm == 'Basic':
+            elif norm == 'Standard':
                 projs = projs / wf.mean(axis=0)
                             
         projs = projs * 4
@@ -118,8 +149,14 @@ class ReconUI:
                             ncore=20)
 
         sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
-        return self._render_recon(slide_value), sl_update
+        im_update, hist_update = self._render_recon(slide_value)
+        return im_update, hist_update, sl_update
 
+
+    def update_clip(self, slide_value, is_clip, lower, upper):
+        self.recon_is_clip = is_clip
+        self.recon_clip = [lower, upper]
+        return self._render_recon(slide_value=slide_value)
 
     def main_interface(self):
         metadata_fp = '/home/beams/S1IDUSER/new_data/alshibli_nov22/F50_sp5_tomo/F50_sp5_tomo_TomoFastScan.dat'
@@ -158,10 +195,14 @@ class ReconUI:
                 recon_img = gr.Image(label='Reconstruction',
                                     image_mode="L",
                                     interactive=False)
+                recon_dist = gr.Image(label='Pixel Intensity Distribution')
                 recon_slide = gr.Slider(label='Reconstruction', interactive=True)
-                norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Basic', 'None'], value='TomoPy')
+                norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
                 recon_btn = gr.Button('Reconstruct')
-                recon_btn = gr.Button('Reconstruct')
+                with gr.Row():
+                    clip_ckbx = gr.Checkbox(label='Enable Clipping')
+                    clip_low = gr.Number(label='Lower Bound', value=-1.0)
+                    clip_high = gr.Number(label='High Bound', value=1.0)
                 
 
             # Functionality Loading Tab
@@ -180,7 +221,7 @@ class ReconUI:
                                 outputs=load_txt
                                 )
 
-            # Functionality Recon Tab
+            # Functionality Proj Tab
             reset_proj_btn.click(fn=self.reload_reset_scans,
                                     outputs=[proj_slide, proj_img,
                                             proj_xs_num, proj_xe_num,
@@ -198,15 +239,27 @@ class ReconUI:
                                 outputs=proj_img
             )
 
-            # Recon Functionality
+            # Functionality Proj Tab
 
             recon_slide.change(fn=self.update_recon_slide,
                                 inputs=recon_slide,
-                                outputs=recon_img)
+                                outputs=[recon_img, recon_dist])
 
             recon_btn.click(fn=self.reconstruct,
                                 inputs=[recon_slide, norm_rdo],
-                                outputs=[recon_img, recon_slide])
+                                outputs=[recon_img, recon_dist, recon_slide])
+            
+            clip_ckbx.change(fn=self.update_clip,
+                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
+                            outputs=[recon_img, recon_dist])
+
+            clip_low.change(fn=self.update_clip,
+                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
+                            outputs=[recon_img, recon_dist])
+
+            clip_high.change(fn=self.update_clip,
+                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
+                            outputs=[recon_img, recon_dist])
 
 
         scan_if.queue(concurrency_count=3).launch()
