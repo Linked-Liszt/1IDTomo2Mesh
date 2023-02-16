@@ -30,8 +30,8 @@ class ReconUI:
         self.cur_projs = None
         self.cur_recon = None
         self.crop = [0, 0, 0, 0]
-        self.recon_is_clip = False
-        self.recon_clip = []
+        self.recon_is_clip = True
+        self.recon_clip = [-0.01, 0.01] # Replace with const
         self.circ_crop = False
         self.circ_ratio = 1.0
 
@@ -72,6 +72,7 @@ class ReconUI:
         im_update = self._render_proj(0)
         return sl_update, im_update, xs_update, xe_update, ys_update, ye_update
     
+
     def update_proj_slide(self, slide_value):
         return self._render_proj(slide_value)
 
@@ -119,19 +120,25 @@ class ReconUI:
         return self._render_recon(slide_value)
 
 
-    def reconstruct(self, slide_value, norm):
+    def _reconstruct(self, slide_value, norm, center_offset, recon_slice=None):
         if self.cur_projs is None:
             self.cur_projs = copy.deepcopy(self.loaded_scans)
             self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
 
         projs = self.cur_projs.projs[:, self.crop[0]:self.crop[1], 
                                         self.crop[2]:self.crop[3]]
-        if norm  != 'None':
-            wf = self.cur_projs.white_fields[:, self.crop[0]:self.crop[1], 
-                                             self.crop[2]:self.crop[3]]
-            df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
+        
+        wf = self.cur_projs.white_fields[:, self.crop[0]:self.crop[1], 
                                             self.crop[2]:self.crop[3]]
+        df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
+                                        self.crop[2]:self.crop[3]]
 
+        if recon_slice is not None:
+            projs = projs[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
+            wf = wf[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
+            df = df[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
+
+        if norm  != 'None':
             if norm == 'TomoPy':
                 projs = tomopy.normalize(projs, wf, df)
             
@@ -140,7 +147,7 @@ class ReconUI:
                             
         projs = projs * 4
         options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
-        center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2]
+        center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2] + center_offset
         self.cur_recon = tomopy.recon(projs[:-1],
                             self.cur_projs.omega[:-1],
                             center=center,
@@ -152,6 +159,17 @@ class ReconUI:
         im_update, hist_update = self._render_recon(slide_value)
         return im_update, hist_update, sl_update
 
+
+    def reconstruct_all(self, slide_value, norm, center_offset):
+        return self._reconstruct(slide_value, norm, center_offset)
+
+    def reconstruct_slice(self, slide_value, norm, center_offset, slice_start, slice_num):
+        return self._reconstruct(slide_value, norm, center_offset, recon_slice=[slice_start, slice_num])
+
+    def update_clip(self, slide_value, is_clip, lower, upper):
+        self.recon_is_clip = is_clip
+        self.recon_clip = [lower, upper]
+        return self._render_recon(slide_value=slide_value)
 
     def update_clip(self, slide_value, is_clip, lower, upper):
         self.recon_is_clip = is_clip
@@ -198,12 +216,21 @@ class ReconUI:
                 recon_dist = gr.Image(label='Pixel Intensity Distribution')
                 recon_slide = gr.Slider(label='Reconstruction', interactive=True)
                 norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
-                recon_btn = gr.Button('Reconstruct')
+                center_num = gr.Number(label='Center Offset', precision=0, value=0)
                 with gr.Row():
-                    clip_ckbx = gr.Checkbox(label='Enable Clipping')
-                    clip_low = gr.Number(label='Lower Bound', value=-1.0)
-                    clip_high = gr.Number(label='High Bound', value=1.0)
+                    recon_slice_btn = gr.Button("Reconstruct Slice")
+                    recon_slice_start = gr.Number(label="Slice Start", precision=0, value=500)
+                    recon_slice_num = gr.Number(label="Num Slices", precision=0, value=5)
+                recon_btn = gr.Button('Reconstruct All')
+
+                with gr.Row():
+                    clip_ckbx = gr.Checkbox(label='Enable Clipping', value=True)
+                    clip_low = gr.Number(label='Lower Bound', value=-0.01)
+                    clip_high = gr.Number(label='High Bound', value=0.01)
                 
+                with gr.Row():
+                    circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
+                    circ_ratio = gr.Number(label='Crop Ratio')
 
             # Functionality Loading Tab
             avail_scans = gr.State()
@@ -245,8 +272,12 @@ class ReconUI:
                                 inputs=recon_slide,
                                 outputs=[recon_img, recon_dist])
 
-            recon_btn.click(fn=self.reconstruct,
-                                inputs=[recon_slide, norm_rdo],
+            recon_btn.click(fn=self.reconstruct_all,
+                                inputs=[recon_slide, norm_rdo, center_num],
+                                outputs=[recon_img, recon_dist, recon_slide])
+
+            recon_slice_btn.click(fn=self.reconstruct_slice,
+                                inputs=[recon_slide, norm_rdo, center_num, recon_slice_start, recon_slice_num],
                                 outputs=[recon_img, recon_dist, recon_slide])
             
             clip_ckbx.change(fn=self.update_clip,
