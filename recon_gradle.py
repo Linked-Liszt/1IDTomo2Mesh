@@ -122,7 +122,8 @@ class ReconUI:
         norm_im /= np.max(np.abs(norm_im))
         # Decrease rendering size
         pad = norm_im.shape[1] // 2
-        norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
+        # Padding can be used to reduce image size
+        #norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
         if return_im:
             return norm_im, hist_im
         else:
@@ -216,7 +217,7 @@ class ReconUI:
         metadata_fp = '/home/beams/S1IDUSER/new_data/alshibli_nov22/F50_sp5_tomo/F50_sp5_tomo_TomoFastScan.dat'
         override_path = '/home/beams/S1IDUSER/mnt/s1c/alshibli_nov22/tomo/F50_sp5_tomo'
 
-        with gr.Blocks() as scan_if:
+        with gr.Blocks(title='1ID Tomo Reconstruction') as scan_if:
             # Loading Tab Layout
             with gr.Tab("Loading Data"):
                 metadata_fp_fld = gr.Textbox(label='Metadata File Path', value=metadata_fp)
@@ -246,35 +247,39 @@ class ReconUI:
                 proj_crop_btn = gr.Button('Crop Projections')
         
             with gr.Tab('Reconstruction'):
-                recon_img = gr.Image(label='Reconstruction',
-                                    image_mode="L",
-                                    interactive=False).style(height='3')
-                recon_dist = gr.Image(label='Pixel Intensity Distribution')
-                recon_slide = gr.Slider(label='Reconstruction', interactive=True)
-                norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
-                center_num = gr.Number(label='Center Offset', precision=0, value=0)
-
                 with gr.Row():
-                    recon_slice_btn = gr.Button("Reconstruct Slice")
-                    recon_slice_start = gr.Number(label="Slice Start", precision=0, value=500)
-                    recon_slice_num = gr.Number(label="Num Slices", precision=0, value=5)
-                recon_btn = gr.Button('Reconstruct All')
+                    with gr.Column(scale=1.5):
+                        recon_img = gr.Image(label='Reconstruction',
+                                            image_mode="L",
+                                            interactive=False).style(height='3')
+                        recon_dist = gr.Image(label='Pixel Intensity Distribution')
+                        recon_slide = gr.Slider(label='Reconstruction', interactive=True)
 
-                with gr.Row():
-                    center_render_btn = gr.Button("Generate Centering Renders")
-                    center_render_ckbx = gr.Checkbox(label="Show Centering Render")
-                    center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
+                    with gr.Column():
+                        norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
+                        center_num = gr.Number(label='Center Offset', precision=0, value=0)
 
-                center_render_imgrid = gr.Gallery(visible=False)
+                        with gr.Row():
+                            recon_slice_btn = gr.Button("Reconstruct Slice")
+                            recon_slice_start = gr.Number(label="Slice Start", precision=0, value=500)
+                            recon_slice_num = gr.Number(label="Num Slices", precision=0, value=5)
+                        recon_btn = gr.Button('Reconstruct All')
 
-                with gr.Row():
-                    clip_ckbx = gr.Checkbox(label='Enable Clipping', value=True)
-                    clip_low = gr.Number(label='Lower Bound', value=-0.01)
-                    clip_high = gr.Number(label='High Bound', value=0.01)
-                
-                with gr.Row():
-                    circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
-                    circ_ratio = gr.Number(label='Crop Ratio', value=1.0)
+                        with gr.Row():
+                            center_render_btn = gr.Button("Generate Centering Renders")
+                            center_render_ckbx = gr.Checkbox(label="Show Centering Render")
+                            center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
+
+                        center_render_imgrid = gr.Gallery(visible=False)
+
+                        with gr.Row():
+                            clip_ckbx = gr.Checkbox(label='Enable Clipping', value=True)
+                            clip_low = gr.Number(label='Lower Bound', value=-0.01)
+                            clip_high = gr.Number(label='High Bound', value=0.01)
+                        
+                        with gr.Row():
+                            circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
+                            circ_ratio = gr.Number(label='Crop Ratio', value=1.0)
 
             # Functionality Loading Tab
             avail_scans = gr.State()

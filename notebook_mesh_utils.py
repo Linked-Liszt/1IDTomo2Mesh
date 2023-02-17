@@ -141,10 +141,10 @@ async def async_load_img(im_fp):
     im = Image.open(os.path.join(im_fp))
     return np.array(im)
 
-def crop_projs(scan_data, crop_dims):
-    scan_data.projs = scan_data.projs[:, :, crop_dims[0]:crop_dims[1]]
-    scan_data.dark_fields = scan_data.dark_fields[:, :, crop_dims[0]:crop_dims[1]]
-    scan_data.white_fields = scan_data.white_fields[:, :, crop_dims[0]:crop_dims[1]]
+def crop_projs(scan_data, x_start, x_end, y_start, y_end):
+    scan_data.projs = scan_data.projs[:, y_start:y_end, x_start:x_end]
+    scan_data.dark_fields = scan_data.dark_fields[:, y_start:y_end, x_start:x_end]
+    scan_data.white_fields = scan_data.white_fields[:, y_start:y_end, x_start:x_end]
 
 
 def reconstruct(scan_data: ScanData, gpu_batch_size):
@@ -202,11 +202,7 @@ def norm_whitefield(scan_data: ScanData) -> ScanData:
         
     TODO: DF correction: (proj-df / (wf-df)
     """
-    scan_data.projs = scan_data.projs.swapaxes(0, 1)
-    scan_data.white_fields= scan_data.white_fields.swapaxes(0, 1)
     scan_data.projs = scan_data.projs / np.mean(scan_data.white_fields, axis=0) 
-    scan_data.projs = scan_data.projs.swapaxes(0, 1)
-    scan_data.white_fields= scan_data.white_fields.swapaxes(0, 1)
     return scan_data
 
 

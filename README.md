@@ -1,12 +1,10 @@
 # 1IDTomo2Mesh
-Tomo2Mesh API for Beamline 1ID.
+Tomo2Mesh API and Reconstruction UI for Beamline 1ID. Currently WIP. 
 
 # Installation
 
-(Currently Notes):
-- Requires cupy + Tensorflow + CUDA to play nicely
-  - TODO: Figure out how to guarantee conda install handles both
-- Pymesh - no pypi: https://pymesh.readthedocs.io/en/latest/installation.html
-  - Requires system permissions. Not easily done through conda. 
+Create a new conda environment and install requirements via `env_setup.sh`.
 
 # Usage
+
+The various notebook support standalone processes. Most use utilities. To use the reconstruction UI, run recon_gradle.py and connect to the local http server. 
