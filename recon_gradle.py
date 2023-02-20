@@ -30,10 +30,15 @@ class ReconUI:
         self.cur_projs = None
         self.cur_recon = None
         self.crop = [0, 0, 0, 0]
+
+        self.recon_layer_start = 0
+
         self.recon_is_clip = True
         self.recon_clip = [-0.01, 0.01] # Replace with const
         self.recon_circ_crop = False
         self.recon_circ_ratio = 1.0
+        self.recon_is_denoise = False
+        self.recon_denoise_params = []
 
     def get_avaliable_scans(self, metadata_fp, is_override, override_path):
         if is_override:
@@ -95,6 +100,9 @@ class ReconUI:
         if self.recon_circ_crop:
             norm_im = np.expand_dims(norm_im, 0)
             norm_im = tomopy.misc.corr.circ_mask(norm_im, 0, ratio=self.recon_circ_ratio, val=np.mean(norm_im))[0]
+        
+        if self.recon_is_denoise:
+            norm_im = cv2.fastNlMeansDenoising(norm_im ,None, self.recon_denoise_params[0], self.recon_denoise_params[1])
 
         return norm_im
 
@@ -147,7 +155,9 @@ class ReconUI:
         df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
                                         self.crop[2]:self.crop[3]]
 
+        self.recon_layer_start = 0
         if recon_slice is not None:
+            self.recon_layer_start = recon_slice[0]
             projs = projs[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
             wf = wf[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
             df = df[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
@@ -197,6 +207,11 @@ class ReconUI:
         self.recon_circ_crop = is_circ
         self.recon_circ_ratio = ratio
         return self._render_recon(slide_value=slide_value)
+
+    def update_denoise(self, slide_value, is_denoise, template_window, search_window):
+        self.recon_is_denoise = is_denoise
+        self.recon_denoise_params = [template_window, search_window]
+        return self._render_recon(slide_value=slide_value)
     
 
     def update_center_render(self, is_visible):
@@ -211,6 +226,23 @@ class ReconUI:
             center_ims.append((im, str(center)))
 
         return gr.Gallery.update(value=center_ims)
+
+    def export_recon(self, export_dir, progress=gr.Progress(track_tqdm=True)):
+        if not os.path.exists(export_dir):
+            os.makedirs(os.path.join(export_dir, 'recon'))
+        
+        start_id = self.recon_layer_start
+        for i in tqdm(range(self.cur_recon.shape[0])):
+            norm = self._norm_recon(self.cur_recon[i])
+            norm = norm + (0 - norm.min())
+            norm = norm * (254 / np.max(norm))
+            im = Image.fromarray(norm)
+            im = im.convert("L")
+            im_path = os.path.join(export_dir, 'recon', f'{start_id:05d}.tiff')
+            im.save(im_path)
+            start_id += 1
+        
+        return gr.Text.update(value="Done")
 
 
     def main_interface(self):
@@ -255,6 +287,13 @@ class ReconUI:
                         recon_dist = gr.Image(label='Pixel Intensity Distribution')
                         recon_slide = gr.Slider(label='Reconstruction', interactive=True)
 
+                        with gr.Row():
+                            center_render_btn = gr.Button("Generate Centering Renders")
+                            center_render_ckbx = gr.Checkbox(label="Show Centering Render")
+                            center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
+
+                        center_render_imgrid = gr.Gallery(visible=False)
+
                     with gr.Column():
                         norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
                         center_num = gr.Number(label='Center Offset', precision=0, value=0)
@@ -266,13 +305,6 @@ class ReconUI:
                         recon_btn = gr.Button('Reconstruct All')
 
                         with gr.Row():
-                            center_render_btn = gr.Button("Generate Centering Renders")
-                            center_render_ckbx = gr.Checkbox(label="Show Centering Render")
-                            center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
-
-                        center_render_imgrid = gr.Gallery(visible=False)
-
-                        with gr.Row():
                             clip_ckbx = gr.Checkbox(label='Enable Clipping', value=True)
                             clip_low = gr.Number(label='Lower Bound', value=-0.01)
                             clip_high = gr.Number(label='High Bound', value=0.01)
@@ -280,6 +312,19 @@ class ReconUI:
                         with gr.Row():
                             circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
                             circ_ratio = gr.Number(label='Crop Ratio', value=1.0)
+
+                        """ Need to implement im conversion
+                        with gr.Row():
+                            denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
+                            template_wdw_num = gr.Number(label='Template Window', precision=0, value=7)
+                            search_wdw_num = gr.Number(label='Search Window', precision=0, value=21)
+                        """
+
+                        
+                        with gr.Row():
+                            export_btn = gr.Button('Export Scans')
+                            export_fld = gr.Textbox(label='Export Location', value='recon/test')
+                        export_txt = gr.Textbox(label='Export Progress', interactive=False)
 
             # Functionality Loading Tab
             avail_scans = gr.State()
@@ -361,6 +406,27 @@ class ReconUI:
             circ_ratio.change(fn=self.update_circ,
                              inputs=[recon_slide, circ_ckbx, circ_ratio],
                             outputs=[recon_img, recon_dist])
+
+            """
+            denoise_ckbx.change(fn=self.update_denoise,
+                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
+                                outputs=[recon_img, recon_dist])
+
+            template_wdw_num.change(fn=self.update_denoise,
+                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
+                                outputs=[recon_img, recon_dist])
+
+            search_wdw_num.change(fn=self.update_denoise,
+                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
+                                outputs=[recon_img, recon_dist])
+            """
+
+            # Export
+
+            export_btn.click(fn=self.export_recon,
+                             inputs=[export_fld],
+                             outputs=export_txt
+            )
 
 
         scan_if.queue(concurrency_count=3).launch()
