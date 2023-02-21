@@ -8,3 +8,4 @@ ConfigArgParse
 ipykernel
 numexpr
 cupy-cuda11x
+gradio
