@@ -5,6 +5,11 @@ os.environ["CUDA_VISIBLE_DEVICES"] = CUDA_DEVICE
 
 import gradio as gr
 
+import matplotlib.pyplot as plt
+import matplotlib
+# Fix for linux rendering off the main thread
+matplotlib.use('agg')
+
 import numpy as np
 from PIL import Image
 import json
@@ -13,10 +18,15 @@ import argparse
 import io
 from tqdm import tqdm
 import notebook_mesh_utils as nu
-import matplotlib.pyplot as plt
 import tomopy
+import pprint
 import cv2
 
+
+DEFAULTS = {
+    'denoise_template': 15,
+    'denoise_search': 7
+}
 
 class ReconUI:
     def __init__(self):
@@ -32,13 +42,14 @@ class ReconUI:
         self.crop = [0, 0, 0, 0]
 
         self.recon_layer_start = 0
+        self.recon_center_offset = 0
 
         self.recon_is_clip = True
         self.recon_clip = [-0.01, 0.01] # Replace with const
         self.recon_circ_crop = False
         self.recon_circ_ratio = 1.0
         self.recon_is_denoise = False
-        self.recon_denoise_params = []
+        self.recon_denoise_params = [DEFAULTS['denoise_template'], DEFAULTS['denoise_search']]
 
     def get_avaliable_scans(self, metadata_fp, is_override, override_path):
         if is_override:
@@ -94,12 +105,13 @@ class ReconUI:
                                              self.crop[2]:self.crop[3]])
 
     def _norm_recon(self, norm_im):
+        norm_im = np.copy(norm_im)
         if self.recon_is_clip:
             norm_im = np.clip(norm_im, self.recon_clip[0], self.recon_clip[1])
         
         if self.recon_circ_crop:
             norm_im = np.expand_dims(norm_im, 0)
-            norm_im = tomopy.misc.corr.circ_mask(norm_im, 0, ratio=self.recon_circ_ratio, val=np.mean(norm_im))[0]
+            norm_im = tomopy.misc.corr.circ_mask(norm_im, 0, ratio=self.recon_circ_ratio, val=np.mean(norm_im), ncore=5)[0]
         
         if self.recon_is_denoise:
             min_norm = np.min(norm_im)
@@ -140,6 +152,9 @@ class ReconUI:
         pad = norm_im.shape[1] // 2
         # Padding can be used to reduce image size
         #norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
+
+        pprint.pp(self.export_params())
+
         if return_im:
             return norm_im, hist_im
         else:
@@ -180,6 +195,7 @@ class ReconUI:
         projs = projs * 4
         options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
         center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2] + center_offset
+        self.recon_center_offset = center_offset
         self.cur_recon = tomopy.recon(projs[:-1],
                             self.cur_projs.omega[:-1],
                             center=center,
@@ -236,8 +252,11 @@ class ReconUI:
         return gr.Gallery.update(value=center_ims)
 
     def export_recon(self, export_dir, progress=gr.Progress(track_tqdm=True)):
-        if not os.path.exists(export_dir):
+        if not os.path.exists(os.path.join(export_dir, 'recon')):
             os.makedirs(os.path.join(export_dir, 'recon'))
+        
+        with open(os.path.join(export_dir, 'recon_params.json'), 'w') as params_f:
+            json.dump(self.export_params(), params_f, indent=4)
         
         start_id = self.recon_layer_start
         for i in tqdm(range(self.cur_recon.shape[0])):
@@ -251,6 +270,18 @@ class ReconUI:
             start_id += 1
         
         return gr.Text.update(value="Done")
+    
+    def export_params(self):
+        return {
+            'proj_crop': self.crop,
+            'center_offset': self.recon_center_offset,
+            'is_clipped': self.recon_is_clip,
+            'clip': self.recon_clip,
+            'is_circ_crop': self.recon_circ_crop,
+            'circ_ratio': self.recon_circ_ratio,
+            'is_denoise': self.recon_is_denoise,
+            'denoise_params': self.recon_denoise_params
+        }
 
 
     def main_interface(self):
@@ -323,8 +354,8 @@ class ReconUI:
 
                         with gr.Row():
                             denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
-                            template_wdw_num = gr.Number(label='Template Window', precision=0, value=20)
-                            search_wdw_num = gr.Number(label='Search Window', precision=0, value=40)
+                            template_wdw_num = gr.Number(label='Template Window', precision=0, value=DEFAULTS['denoise_search'])
+                            search_wdw_num = gr.Number(label='Search Window', precision=0, value=DEFAULTS['denoise_template'])
 
                         
                         with gr.Row():
@@ -440,72 +471,3 @@ if __name__ == '__main__':
     ReconUI()
 
 
-
-"""
-
-
-scan = scans[1]
-scan
-
-
-
-
-print(scan_data.projs.shape)
-print(scan_data.dark_fields.shape)
-print(scan_data.white_fields.shape)
-print(scan_data.omega.shape)
-
-
-nu.crop_projs(scan_data, [200, 1720])
-
-proj = tomopy.normalize(scan_data.projs, scan_data.white_fields, scan_data.dark_fields)
-#proj = tomopy.minus_log(proj)
-print(proj.shape)
-
-rot_center = tomopy.find_center(proj, scan_data.omega, init=scan_data.projs.shape[2]//2, ind=300, tol=0.5)
-
-print(rot_center)
-
-print(scan_data.projs.shape[2]/2)
-#print(rot_center)
-print(proj.shape)
-print(scan_data.omega.shape)
-#rot_center = scan_data.projs.shape[2]//2
-
-adjusted = proj * 4 # increase contrast
-
-options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
-recon = tomopy.recon(adjusted[:-1],
-                    scan_data.omega[:-1],
-                    center=adjusted.shape[2]//2,
-                    algorithm=tomopy.astra,
-                    options=options,
-                    ncore=20)
-
-#recon_clipped = np.clip(recon, 0, 0.002)
-recon_clipped = recon
-
-# %%
-_ = nu.plot_recon(recon_clipped, 500) 
-
-# %%
-print(recon_clipped[0][0][0])
-
-# %%
-norm[0][0]
-
-# %%
-print(np.max(recon_clipped[0]))
-print(np.max(recon_clipped[0] * (254 / np.max(recon_clipped[0]))))
-
-# %%
-for layer_idx in range(recon_clipped.shape[0]):
-norm = recon_clipped[layer_idx]
-norm = norm + (0 - norm.min())
-norm = norm * (254 / np.max(norm))
-im = Image.fromarray(norm)
-im = im.convert("L")
-im.save(f'recon/{layer_idx:05d}.tiff')
-
-
-"""
