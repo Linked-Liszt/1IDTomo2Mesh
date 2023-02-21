@@ -102,7 +102,15 @@ class ReconUI:
             norm_im = tomopy.misc.corr.circ_mask(norm_im, 0, ratio=self.recon_circ_ratio, val=np.mean(norm_im))[0]
         
         if self.recon_is_denoise:
+            min_norm = np.min(norm_im)
+            norm_im = norm_im - min_norm
+            max_norm = np.max(norm_im)
+            norm_im  = norm_im * (254.0 / max_norm)
+            norm_im = np.uint8(norm_im)
             norm_im = cv2.fastNlMeansDenoising(norm_im ,None, self.recon_denoise_params[0], self.recon_denoise_params[1])
+            norm_im = np.float_(norm_im)
+            norm_im = norm_im / (254.0 / max_norm)
+            norm_im = norm_im + min_norm
 
         return norm_im
 
@@ -127,7 +135,7 @@ class ReconUI:
         pad_im = Image.new(hist_im.mode, (width, new_height), (255, 255, 255))
         pad_im.paste(hist_im, (0, 50))
 
-        norm_im /= np.max(np.abs(norm_im))
+        norm_im = norm_im / np.max(np.abs(norm_im))
         # Decrease rendering size
         pad = norm_im.shape[1] // 2
         # Padding can be used to reduce image size
@@ -234,7 +242,7 @@ class ReconUI:
         start_id = self.recon_layer_start
         for i in tqdm(range(self.cur_recon.shape[0])):
             norm = self._norm_recon(self.cur_recon[i])
-            norm = norm + (0 - norm.min())
+            norm -= norm.min()
             norm = norm * (254 / np.max(norm))
             im = Image.fromarray(norm)
             im = im.convert("L")
@@ -313,12 +321,10 @@ class ReconUI:
                             circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
                             circ_ratio = gr.Number(label='Crop Ratio', value=1.0)
 
-                        """ Need to implement im conversion
                         with gr.Row():
                             denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
-                            template_wdw_num = gr.Number(label='Template Window', precision=0, value=7)
-                            search_wdw_num = gr.Number(label='Search Window', precision=0, value=21)
-                        """
+                            template_wdw_num = gr.Number(label='Template Window', precision=0, value=20)
+                            search_wdw_num = gr.Number(label='Search Window', precision=0, value=40)
 
                         
                         with gr.Row():
@@ -407,7 +413,6 @@ class ReconUI:
                              inputs=[recon_slide, circ_ckbx, circ_ratio],
                             outputs=[recon_img, recon_dist])
 
-            """
             denoise_ckbx.change(fn=self.update_denoise,
                                 inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
                                 outputs=[recon_img, recon_dist])
@@ -419,7 +424,6 @@ class ReconUI:
             search_wdw_num.change(fn=self.update_denoise,
                                 inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
                                 outputs=[recon_img, recon_dist])
-            """
 
             # Export
 
