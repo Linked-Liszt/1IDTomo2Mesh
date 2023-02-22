@@ -12,7 +12,6 @@ matplotlib.use('agg')
 
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 import json
 import copy
 import argparse
@@ -25,10 +24,12 @@ import cv2
 
 
 DEFAULTS = {
+    'crop_x_start': 200,
+    'crop_x_end': 1720,
     'rot': 0,
     'denoise_template': 15,
     'denoise_search': 7,
-    'clip_low': 0.005,
+    'clip_low': -0.005,
     'clip_high': 0.005
 }
 
@@ -50,7 +51,7 @@ class ReconUI:
         self.recon_center_offset = 0
 
         self.recon_is_clip = True
-        self.recon_clip = [-0.01, 0.01] # Replace with const
+        self.recon_clip = [DEFAULTS['clip_low'], DEFAULTS['clip_high']] # Replace with const
         self.recon_circ_crop = False
         self.recon_circ_ratio = 1.0
         self.recon_is_denoise = False
@@ -85,11 +86,11 @@ class ReconUI:
         else:
             self.cur_projs = copy.deepcopy(self.loaded_scans)
         sl_update = gr.Slider.update(minimum=0, maximum=self.cur_projs.projs.shape[0]-1, value=0, interactive=True)
-        xs_update = gr.Number.update(value=0)
-        xe_update = gr.Number.update(value=self.cur_projs.projs.shape[2])
+        xs_update = gr.Number.update(value=DEFAULTS['crop_x_start'])
+        xe_update = gr.Number.update(value=DEFAULTS['crop_x_end'])
         ys_update = gr.Number.update(value=0)
         ye_update = gr.Number.update(value=self.cur_projs.projs.shape[1])
-        self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
+        self.crop = [0, self.cur_projs.projs.shape[1], DEFAULTS['crop_x_start'], DEFAULTS['crop_x_end']]
         im_update = self._render_proj(0)
         return sl_update, im_update, xs_update, xe_update, ys_update, ye_update
     
@@ -115,8 +116,6 @@ class ReconUI:
         # Perform the rotation
         M = cv2.getRotationMatrix2D(center, self.rot, scale=1)
         norm_im = cv2.warpAffine(norm_im, M, (w, h))
-
-        #norm_im = ndimage.rotate(norm_im, self.rot, reshape=False)
 
         return gr.Image.update(value=norm_im[self.crop[0]:self.crop[1], 
                                              self.crop[2]:self.crop[3]])
@@ -337,8 +336,6 @@ class ReconUI:
 
                 
             with gr.Tab('Projection'):
-                # TODO: Rotation around the center to fix tilted
-                # Keep same size, add pixels.
                 proj_img = gr.Image(label='Projection',
                                     image_mode="L",
                                 interactive=False)
@@ -364,12 +361,6 @@ class ReconUI:
                         recon_dist = gr.Image(label='Pixel Intensity Distribution')
                         recon_slide = gr.Slider(label='Reconstruction', interactive=True)
 
-                        with gr.Row():
-                            center_render_btn = gr.Button("Generate Centering Renders")
-                            center_render_ckbx = gr.Checkbox(label="Show Centering Render")
-                            center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
-
-                        center_render_imgrid = gr.Gallery(visible=False)
 
                     with gr.Column():
                         # Reset slider on recon
@@ -384,8 +375,8 @@ class ReconUI:
 
                         with gr.Row():
                             clip_ckbx = gr.Checkbox(label='Enable Clipping', value=True)
-                            clip_low = gr.Number(label='Lower Bound', value=-0.01)
-                            clip_high = gr.Number(label='High Bound', value=0.01)
+                            clip_low = gr.Number(label='Lower Bound', value=DEFAULTS['clip_low'])
+                            clip_high = gr.Number(label='High Bound', value=DEFAULTS['clip_high'])
                         
                         with gr.Row():
                             circ_ckbx = gr.Checkbox(label='Enable Circle Crop')
@@ -402,6 +393,13 @@ class ReconUI:
                             export_btn = gr.Button('Export Scans')
                             export_fld = gr.Textbox(label='Export Location', value='recon/test')
                         export_txt = gr.Textbox(label='Export Progress', interactive=False)
+
+                with gr.Row():
+                    center_render_btn = gr.Button("Generate Centering Renders")
+                    center_render_ckbx = gr.Checkbox(label="Show Centering Render")
+                    center_slice = gr.Number(label="Centering Slice", precision=0, value=500)
+
+                center_render_imgrid = gr.Gallery(visible=False)
 
             # Functionality Loading Tab
             avail_scans = gr.State()
