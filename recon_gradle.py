@@ -12,6 +12,7 @@ matplotlib.use('agg')
 
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 import json
 import copy
 import argparse
@@ -24,8 +25,11 @@ import cv2
 
 
 DEFAULTS = {
+    'rot': 0,
     'denoise_template': 15,
-    'denoise_search': 7
+    'denoise_search': 7,
+    'clip_low': 0.005,
+    'clip_high': 0.005
 }
 
 class ReconUI:
@@ -40,6 +44,7 @@ class ReconUI:
         self.cur_projs = None
         self.cur_recon = None
         self.crop = [0, 0, 0, 0]
+        self.rot = DEFAULTS['rot']
 
         self.recon_layer_start = 0
         self.recon_center_offset = 0
@@ -93,14 +98,26 @@ class ReconUI:
         return self._render_proj(slide_value)
 
 
-    def crop_img(self, slide_value, start_x, end_x, start_y, end_y):
+    def crop_img(self, slide_value, start_x, end_x, start_y, end_y, rot):
         self.crop = [start_y, end_y, start_x, end_x]
+        self.rot = -1 * rot
         return self._render_proj(slide_value)
 
     def _render_proj(self, slide_value):
         norm_im = self.cur_projs.projs[slide_value]
         if norm_im.dtype is not np.dtype(np.uint16):
             norm_im /= np.max(np.abs(norm_im))
+        
+        w = norm_im.shape[1]
+        h = norm_im.shape[0]
+        center = (w / 2, h / 2)
+
+        # Perform the rotation
+        M = cv2.getRotationMatrix2D(center, self.rot, scale=1)
+        norm_im = cv2.warpAffine(norm_im, M, (w, h))
+
+        #norm_im = ndimage.rotate(norm_im, self.rot, reshape=False)
+
         return gr.Image.update(value=norm_im[self.crop[0]:self.crop[1], 
                                              self.crop[2]:self.crop[3]])
 
@@ -178,12 +195,29 @@ class ReconUI:
         df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
                                         self.crop[2]:self.crop[3]]
 
+        print('Rotating')
+        if self.rot != 0:
+            w = projs.shape[2]
+            h = projs.shape[1]
+            center = (w / 2, h / 2)
+
+            M = cv2.getRotationMatrix2D(center, self.rot, scale=1)
+            for i in range(len(projs)):
+                projs[i] = cv2.warpAffine(projs[i], M, (w, h))
+            for i in range(len(wf)):
+                wf[i] = cv2.warpAffine(wf[i], M, (w, h))
+            for i in range(len(df)):
+                df[i] = cv2.warpAffine(df[i], M, (w, h))
+                
+        print('Finished Rotating')
+
         self.recon_layer_start = 0
         if recon_slice is not None:
             self.recon_layer_start = recon_slice[0]
             projs = projs[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
             wf = wf[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
             df = df[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
+
 
         if norm  != 'None':
             if norm == 'TomoPy':
@@ -204,7 +238,7 @@ class ReconUI:
                             ncore=20)
         
         sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
-        im_update, hist_update = self._render_recon(slide_value, return_im)
+        im_update, hist_update = self._render_recon(0, return_im)
         return im_update, hist_update, sl_update
 
 
@@ -243,7 +277,7 @@ class ReconUI:
     
 
     def render_center(self, recon_slice, norm):
-        CENTERS = [-20, -10, -5, -3, 0, 3, 5, 10, 20]
+        CENTERS = list(range(-10, 11))
         center_ims = []
         for center in CENTERS:
             im, _, _ = self._reconstruct(0, norm, center, recon_slice=[recon_slice, 1], return_im=True)
@@ -303,6 +337,8 @@ class ReconUI:
 
                 
             with gr.Tab('Projection'):
+                # TODO: Rotation around the center to fix tilted
+                # Keep same size, add pixels.
                 proj_img = gr.Image(label='Projection',
                                     image_mode="L",
                                 interactive=False)
@@ -315,7 +351,9 @@ class ReconUI:
                     proj_ys_num = gr.Number(label='Y-Start', precision=0)
                     proj_ye_num = gr.Number(label='Y-End', precision=0)
 
-                proj_crop_btn = gr.Button('Crop Projections')
+                rot_num = gr.Number(label='Rotation (deg)')
+
+                proj_crop_btn = gr.Button('Crop & Rotate Projections')
         
             with gr.Tab('Reconstruction'):
                 with gr.Row():
@@ -334,6 +372,7 @@ class ReconUI:
                         center_render_imgrid = gr.Gallery(visible=False)
 
                     with gr.Column():
+                        # Reset slider on recon
                         norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
                         center_num = gr.Number(label='Center Offset', precision=0, value=0)
 
@@ -359,6 +398,7 @@ class ReconUI:
 
                         
                         with gr.Row():
+                            # TODO: 16 bit int out
                             export_btn = gr.Button('Export Scans')
                             export_fld = gr.Textbox(label='Export Location', value='recon/test')
                         export_txt = gr.Textbox(label='Export Progress', interactive=False)
@@ -391,9 +431,10 @@ class ReconUI:
                                 outputs=proj_img)
 
             proj_crop_btn.click(fn=self.crop_img,
-                                inputs=[proj_slide, 
+                                inputs=[proj_slide,
                                         proj_xs_num, proj_xe_num,
-                                        proj_ys_num, proj_ye_num],
+                                        proj_ys_num, proj_ye_num,
+                                        rot_num],
                                 outputs=proj_img
             )
 
