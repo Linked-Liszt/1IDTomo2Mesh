@@ -33,6 +33,9 @@ DEFAULTS = {
     'clip_high': 0.005
 }
 
+META_PATH_BASE = '/home/beams/S1IDUSER/new_data/'
+IM_PATH_BASE = '/home/beams/S1IDUSER/mnt/s1c/'
+
 class ReconUI:
     def __init__(self):
         self.init_shared_components()
@@ -57,11 +60,12 @@ class ReconUI:
         self.recon_is_denoise = False
         self.recon_denoise_params = [DEFAULTS['denoise_template'], DEFAULTS['denoise_search']]
 
-    def get_avaliable_scans(self, metadata_fp, is_override, override_path):
-        if is_override:
-            override_path = override_path
-        else:
-            override_path = None
+    def get_avaliable_scans(self, is_manual, exp_name, scan_name, metadata_fp, override_path):
+        if not is_manual:
+            metadata_fp = os.path.join(META_PATH_BASE, exp_name, scan_name, f'{scan_name}_TomoFastScan.dat')
+            override_path = os.path.join(IM_PATH_BASE, exp_name, 'tomo', scan_name)
+            
+
         scans = nu.extract_scan_data(metadata_fp, override_path)
         new_choices = [f"[{i}]: {scan.img_range}" for i, scan in enumerate(scans)]
         self.scan_drop.choices = new_choices
@@ -69,7 +73,7 @@ class ReconUI:
 
 
     def hide_override(self, ckbx_state):
-        return gr.Textbox.update(visible=ckbx_state)
+        return gr.Textbox.update(visible=ckbx_state), gr.Textbox.update(visible=ckbx_state)
 
 
     def load_scan(self, scans, scan_idx, progress=gr.Progress(track_tqdm=True)):
@@ -117,8 +121,18 @@ class ReconUI:
         M = cv2.getRotationMatrix2D(center, self.rot, scale=1)
         norm_im = cv2.warpAffine(norm_im, M, (w, h))
 
-        return gr.Image.update(value=norm_im[self.crop[0]:self.crop[1], 
-                                             self.crop[2]:self.crop[3]])
+        norm_im[self.crop[0]:self.crop[1], self.crop[2]:self.crop[3]]
+
+        fig, ax = plt.subplots(figsize=(20, 13))
+        ax.imshow(norm_im, cmap='gray')
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf)
+        buf.seek(0)
+        norm_im = Image.open(buf)
+        plt.close(fig)
+
+        return gr.Image.update(value=norm_im)
 
     def _norm_recon(self, norm_im):
         norm_im = np.copy(norm_im)
@@ -146,7 +160,6 @@ class ReconUI:
         norm_im = self.cur_recon[slide_value]
         norm_im = self._norm_recon(norm_im)
 
-
         fig, ax = plt.subplots(figsize=(15, 1.5))
         ax.hist(norm_im.flatten(), bins=100)
         ax.set_title("Pixel Distribution")
@@ -164,8 +177,18 @@ class ReconUI:
         pad_im.paste(hist_im, (0, 50))
 
         norm_im = norm_im / np.max(np.abs(norm_im))
+
+        if not return_im:
+            fig, ax = plt.subplots(figsize=(10, 10))
+            ax.imshow(norm_im, cmap='gray')
+            fig.tight_layout()
+            buf = io.BytesIO()
+            fig.savefig(buf)
+            buf.seek(0)
+            norm_im = Image.open(buf)
+            plt.close(fig)
         # Decrease rendering size
-        pad = norm_im.shape[1] // 2
+        #pad = norm_im.shape[1] // 2
         # Padding can be used to reduce image size
         #norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
 
@@ -181,7 +204,7 @@ class ReconUI:
         return self._render_recon(slide_value)
 
 
-    def _reconstruct(self, slide_value, norm, center_offset, recon_slice=None, return_im=False):
+    def _reconstruct(self, recon_algorithm, norm, center_offset, recon_slice=None, return_im=False):
         if self.cur_projs is None:
             self.cur_projs = copy.deepcopy(self.loaded_scans)
             self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
@@ -320,13 +343,17 @@ class ReconUI:
     def main_interface(self):
         metadata_fp = '/home/beams/S1IDUSER/new_data/alshibli_nov22/F50_sp5_tomo/F50_sp5_tomo_TomoFastScan.dat'
         override_path = '/home/beams/S1IDUSER/mnt/s1c/alshibli_nov22/tomo/F50_sp5_tomo'
+        exp_name = 'alshibli_nov22'
+        scan_name = 'F50_sp5_tomo'
 
         with gr.Blocks(title='1ID Tomo Reconstruction') as scan_if:
             # Loading Tab Layout
             with gr.Tab("Loading Data"):
-                metadata_fp_fld = gr.Textbox(label='Metadata File Path', value=metadata_fp)
-                override_ckbx = gr.Checkbox(label='Override File Path', value=True)
-                override_path_fld = gr.Textbox(label='Image File Path', value=override_path)
+                experiment_fld = gr.Textbox(label='Experiment Folder', value=exp_name)
+                scan_fld = gr.Textbox(label='Scan Name', value=scan_name)
+                override_ckbx = gr.Checkbox(label='Manual File Paths', value=False)
+                metadata_fp_fld = gr.Textbox(label='Metadata File Path', value=metadata_fp, visible=False)
+                override_path_fld = gr.Textbox(label='Image File Path', value=override_path, visible=False)
                 find_scans_btn = gr.Button('Find Scans')
 
                 self.scan_drop.render()
@@ -406,10 +433,10 @@ class ReconUI:
 
             override_ckbx.change(fn=self.hide_override, 
                                 inputs=override_ckbx, 
-                                outputs=override_path_fld)
+                                outputs=[metadata_fp_fld, override_path_fld])
 
             find_scans_btn.click(fn=self.get_avaliable_scans, 
-                                inputs=[metadata_fp_fld, override_ckbx, override_path_fld], 
+                                inputs=[override_ckbx, experiment_fld, scan_fld, metadata_fp_fld, override_path_fld], 
                                 outputs=[self.scan_drop, avail_scans])
 
             load_scans_btn.click(fn=self.load_scan, 
