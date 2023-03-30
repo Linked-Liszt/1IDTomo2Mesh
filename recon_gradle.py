@@ -86,7 +86,7 @@ class ReconUI:
 
     def load_scan(self, scans, scan_idx, is_omgea, omega_low, omega_high, progress=gr.Progress(track_tqdm=True)):
         scan = scans[scan_idx]
-        if is_omgea:
+        if is_omgea or not scan.found_omega:
             print('interperating omega')
             num_ims = len(scan.omega)
             scan.omega = np.linspace(omega_low, omega_high, num=num_ims)
