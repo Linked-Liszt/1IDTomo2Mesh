@@ -234,12 +234,13 @@ class ReconUI:
                                         self.crop[2]:self.crop[3]]
         
         # Prevent rotation from staying
-        projs = np.copy(projs)
-        wf = np.copy(wf)
-        df = np.copy(df)
 
         print('Rotating')
         if self.rot != 0:
+            projs = np.copy(projs)
+            wf = np.copy(wf)
+            df = np.copy(df)
+
             w = projs.shape[2]
             h = projs.shape[1]
             center = (w / 2, h / 2)
@@ -291,28 +292,21 @@ class ReconUI:
     def reconstruct_slice(self, slide_value, norm, center_offset, slice_start, slice_num):
         return self._reconstruct(slide_value, norm, center_offset, recon_slice=[slice_start, slice_num])
         
-
-    def update_clip(self, slide_value, is_clip, lower, upper):
+    def apply_filters(self, slide_value, 
+                      is_clip, clip_lower, clip_upper,
+                      is_circ, circ_ratio,
+                      is_denoise, template_window, search_window):
         self.recon_is_clip = is_clip
-        self.recon_clip = [lower, upper]
-        return self._render_recon(slide_value=slide_value)
+        self.recon_clip = [clip_lower, clip_upper]
 
-
-    def update_clip(self, slide_value, is_clip, lower, upper):
-        self.recon_is_clip = is_clip
-        self.recon_clip = [lower, upper]
-        return self._render_recon(slide_value=slide_value)
-
-
-    def update_circ(self, slide_value, is_circ, ratio):
         self.recon_circ_crop = is_circ
-        self.recon_circ_ratio = ratio
-        return self._render_recon(slide_value=slide_value)
+        self.recon_circ_ratio = circ_ratio
 
-    def update_denoise(self, slide_value, is_denoise, template_window, search_window):
         self.recon_is_denoise = is_denoise
         self.recon_denoise_params = [template_window, search_window]
+
         return self._render_recon(slide_value=slide_value)
+        
     
 
     def update_center_render(self, is_visible):
@@ -440,6 +434,8 @@ class ReconUI:
                             denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
                             template_wdw_num = gr.Number(label='Template Window', precision=0, value=DEFAULTS['denoise_search'])
                             search_wdw_num = gr.Number(label='Search Window', precision=0, value=DEFAULTS['denoise_template'])
+                        
+                        apply_filters_btn = gr.Button('Apply Filters')
 
                         
                         with gr.Row():
@@ -522,37 +518,11 @@ class ReconUI:
 
             # Modifications
              
-            clip_ckbx.change(fn=self.update_clip,
-                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
-                            outputs=[recon_img, recon_dist])
-
-            clip_low.change(fn=self.update_clip,
-                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
-                            outputs=[recon_img, recon_dist])
-
-            clip_high.change(fn=self.update_clip,
-                             inputs=[recon_slide, clip_ckbx, clip_low, clip_high],
-                            outputs=[recon_img, recon_dist])
-
-            circ_ckbx.change(fn=self.update_circ,
-                             inputs=[recon_slide, circ_ckbx, circ_ratio],
-                            outputs=[recon_img, recon_dist])
-
-            circ_ratio.change(fn=self.update_circ,
-                             inputs=[recon_slide, circ_ckbx, circ_ratio],
-                            outputs=[recon_img, recon_dist])
-
-            denoise_ckbx.change(fn=self.update_denoise,
-                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
-                                outputs=[recon_img, recon_dist])
-
-            template_wdw_num.change(fn=self.update_denoise,
-                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
-                                outputs=[recon_img, recon_dist])
-
-            search_wdw_num.change(fn=self.update_denoise,
-                                inputs=[recon_slide, denoise_ckbx, template_wdw_num, search_wdw_num],
-                                outputs=[recon_img, recon_dist])
+            apply_filters_btn.click(fn=self.apply_filters, inputs=[recon_slide,
+                                            clip_ckbx, clip_low, clip_high,
+                                            circ_ckbx, circ_ratio,
+                                            denoise_ckbx, template_wdw_num, search_wdw_num],
+                                            outputs=[recon_img, recon_dist])
 
             # Export
 
