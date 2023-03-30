@@ -67,7 +67,13 @@ class ReconUI:
             
 
         scans = nu.extract_scan_data(metadata_fp, override_path)
-        new_choices = [f"[{i}]: {scan.img_range}" for i, scan in enumerate(scans)]
+        new_choices = []
+        for i, scan in enumerate(scans):
+            if scan.found_omega:
+                new_choices.append(f"[{i}]: {scan.img_range}")
+            else:
+                new_choices.append(f"[{i}]: {scan.img_range} WARN: INTERP OMEGA")
+
         self.scan_drop.choices = new_choices
         return gr.Dropdown.update(choices=new_choices, value=new_choices[0]), scans
 
@@ -75,9 +81,19 @@ class ReconUI:
     def hide_override(self, ckbx_state):
         return gr.Textbox.update(visible=ckbx_state), gr.Textbox.update(visible=ckbx_state)
 
+    def hide_omega(self, ckbx_state):
+        return gr.Number.update(visible=ckbx_state), gr.Number.update(visible=ckbx_state)
 
-    def load_scan(self, scans, scan_idx, progress=gr.Progress(track_tqdm=True)):
-        self.loaded_scans = nu.load_images(scans[scan_idx], 10)
+    def load_scan(self, scans, scan_idx, is_omgea, omega_low, omega_high, progress=gr.Progress(track_tqdm=True)):
+        scan = scans[scan_idx]
+        if is_omgea:
+            print('interperating omega')
+            num_ims = len(scan.omega)
+            scan.omega = np.linspace(omega_low, omega_high, num=num_ims)
+            
+
+
+        self.loaded_scans = nu.load_images(scan, 10)
         self.loaded_scans.projs = self.loaded_scans.projs.swapaxes(0,1)
         self.loaded_scans.dark_fields = self.loaded_scans.dark_fields.swapaxes(0,1)
         self.loaded_scans.white_fields = self.loaded_scans.white_fields.swapaxes(0,1)
@@ -121,7 +137,7 @@ class ReconUI:
         M = cv2.getRotationMatrix2D(center, self.rot, scale=1)
         norm_im = cv2.warpAffine(norm_im, M, (w, h))
 
-        norm_im[self.crop[0]:self.crop[1], self.crop[2]:self.crop[3]]
+        norm_im = norm_im[self.crop[0]:self.crop[1], self.crop[2]:self.crop[3]]
 
         fig, ax = plt.subplots(figsize=(20, 13))
         ax.imshow(norm_im, cmap='gray')
@@ -216,6 +232,11 @@ class ReconUI:
                                             self.crop[2]:self.crop[3]]
         df = self.cur_projs.dark_fields[:, self.crop[0]:self.crop[1], 
                                         self.crop[2]:self.crop[3]]
+        
+        # Prevent rotation from staying
+        projs = np.copy(projs)
+        wf = np.copy(wf)
+        df = np.copy(df)
 
         print('Rotating')
         if self.rot != 0:
@@ -354,7 +375,13 @@ class ReconUI:
                 override_ckbx = gr.Checkbox(label='Manual File Paths', value=False)
                 metadata_fp_fld = gr.Textbox(label='Metadata File Path', value=metadata_fp, visible=False)
                 override_path_fld = gr.Textbox(label='Image File Path', value=override_path, visible=False)
+                omega_override_ckbx = gr.Checkbox(label='Override Angles', value=False)
+                with gr.Row():
+                    omega_start = gr.Number(label='Start Angle', value=-180.0, visible=False, interactive=True)
+                    omega_end = gr.Number(label='End Angle', value=180.0, visible=False, interactive=True)
+
                 find_scans_btn = gr.Button('Find Scans')
+
 
                 self.scan_drop.render()
 
@@ -435,12 +462,17 @@ class ReconUI:
                                 inputs=override_ckbx, 
                                 outputs=[metadata_fp_fld, override_path_fld])
 
+            omega_override_ckbx.change(fn=self.hide_omega, 
+                                inputs=omega_override_ckbx, 
+                                outputs=[omega_start, omega_end])
+
+
             find_scans_btn.click(fn=self.get_avaliable_scans, 
                                 inputs=[override_ckbx, experiment_fld, scan_fld, metadata_fp_fld, override_path_fld], 
                                 outputs=[self.scan_drop, avail_scans])
 
             load_scans_btn.click(fn=self.load_scan, 
-                                inputs=[avail_scans, self.scan_drop], 
+                                inputs=[avail_scans, self.scan_drop, omega_override_ckbx, omega_start, omega_end], 
                                 outputs=load_txt
                                 )
 

@@ -15,6 +15,7 @@ class ScanMetaData():
     omega: np.ndarray
     img_dir: str
     img_prefix: str
+    found_omega: bool
 
 @dataclasses.dataclass
 class ScanData():
@@ -67,7 +68,7 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
                 read_counter -= 1
                 img_range[1] = int(line.split(' ')[4].strip()) 
 
-                omega, path, img_pfx = _find_img_data(dat_lines, 
+                omega, path, img_pfx, found_omega = _find_img_data(dat_lines, 
                                                      img_range, 
                                                      i,
                                                      override_path,
@@ -75,7 +76,7 @@ def extract_scan_data(metadata_fp, override_path=None, override_pfx=None):
                 if is_override_path: path = override_path
                 if is_override_pfx: img_pfx = override_pfx
 
-                scans.append(ScanMetaData(img_range, omega, path, img_pfx))
+                scans.append(ScanMetaData(img_range, omega, path, img_pfx, found_omega))
     return scans
 
 
@@ -290,9 +291,6 @@ def _find_img_data(dat_lines,
         elif dat_lines[i].startswith('Image prefix:'):
             img_pfx = dat_lines[i][IMG_PFX_LEN:].strip()
 
-    if not np.all(found_omegas):
-        raise ValueError(f"Unable to find all omegas for given scan range {start_idx}-{end_idx}")
-    
     if path is None and not override_path:
         raise ValueError(f"Unable to find image path. Please check metadata file structure.")
     
@@ -303,7 +301,7 @@ def _find_img_data(dat_lines,
     path = os.path.join(path, pfx_split[0])
     img_pfx = pfx_split[1]
 
-    return omegas, path, img_pfx
+    return omegas, path, img_pfx, np.all(found_omegas)
 
 
 async def async_time_func(func, args=[], kwargs={}):
