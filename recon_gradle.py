@@ -270,7 +270,7 @@ class ReconUI:
             elif norm == 'Standard':
                 projs = projs / wf.mean(axis=0)
                             
-        projs = projs * 4
+        projs = projs * -4
         options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
         center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2] + center_offset
         self.recon_center_offset = center_offset
@@ -280,6 +280,7 @@ class ReconUI:
                             algorithm=tomopy.astra,
                             options=options,
                             ncore=20)
+        self.cur_recon = self.cur_recon
         
         sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
         im_update, hist_update = self._render_recon(0, return_im)
