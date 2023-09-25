@@ -170,11 +170,16 @@ class ReconUI:
             norm_im = norm_im / (254.0 / max_norm)
             norm_im = norm_im + min_norm
 
+        # TODO: Add actual denoise code here. This function defines the whole post-processing pipeline
+        # You can choose any order of steps for what's approprite. Note tha this is done dynamically 
+        # as the user scrolls in the preview. If it takes a long time, we could figure something out. 
+
         return norm_im
 
     def _render_recon(self, slide_value, return_im=False):
         norm_im = self.cur_recon[slide_value]
         norm_im = self._norm_recon(norm_im)
+
 
         fig, ax = plt.subplots(figsize=(15, 1.5))
         ax.hist(norm_im.flatten(), bins=100)
@@ -209,6 +214,7 @@ class ReconUI:
         #norm_im = np.pad(norm_im, ((0, 0), (pad, pad)), constant_values=np.max(norm_im))
 
         pprint.pp(self.export_params())
+
 
         if return_im:
             return norm_im, hist_im
@@ -274,6 +280,7 @@ class ReconUI:
         options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
         center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2] + center_offset
         self.recon_center_offset = center_offset
+        self.norm_projs = projs
         self.cur_recon = tomopy.recon(projs[:-1],
                             self.cur_projs.omega[:-1],
                             center=center,
@@ -305,6 +312,9 @@ class ReconUI:
 
         self.recon_is_denoise = is_denoise
         self.recon_denoise_params = [template_window, search_window]
+    
+        #TODO: Add parameters here. Can be hard coded or passed in as a parameter from a ui element. 
+        #TODO: Save them as class variables. They are accessed in the _render_recon function. 
 
         return self._render_recon(slide_value=slide_value)
         
@@ -435,12 +445,13 @@ class ReconUI:
                             denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
                             template_wdw_num = gr.Number(label='Template Window', precision=0, value=DEFAULTS['denoise_search'])
                             search_wdw_num = gr.Number(label='Search Window', precision=0, value=DEFAULTS['denoise_template'])
+
+                        #TODO: IF you want to add ui elements, add them here. 
                         
                         apply_filters_btn = gr.Button('Apply Filters')
 
                         
                         with gr.Row():
-                            # TODO: 16 bit int out
                             export_btn = gr.Button('Export Scans')
                             export_fld = gr.Textbox(label='Export Location', value='recon/test')
                         export_txt = gr.Textbox(label='Export Progress', interactive=False)
@@ -518,7 +529,7 @@ class ReconUI:
             )
 
             # Modifications
-             
+            # TODO: Add additional ui input values here.  
             apply_filters_btn.click(fn=self.apply_filters, inputs=[recon_slide,
                                             clip_ckbx, clip_low, clip_high,
                                             circ_ckbx, circ_ratio,
