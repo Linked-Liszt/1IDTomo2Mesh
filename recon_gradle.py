@@ -18,9 +18,14 @@ import argparse
 import io
 from tqdm import tqdm
 import notebook_mesh_utils as nu
+import midas_tomo 
 import tomopy
 import pprint
 import cv2
+from dataclasses import dataclass
+
+ALGO_MIDAS = 'MIDAS'
+ALGO_TOMOPY = 'TomoPy'
 
 
 DEFAULTS = {
@@ -33,8 +38,19 @@ DEFAULTS = {
     'clip_high': 0.005
 }
 
+MD_WD = 'md_wd'
 META_PATH_BASE = '/home/beams/S1IDUSER/new_data/'
 IM_PATH_BASE = '/home/beams/S1IDUSER/mnt/s1c/'
+
+
+@dataclass
+class MDParams:
+    filter_num: int
+    extra_pad: int
+    auto_center: bool
+    do_log: bool
+    ring_remove: bool
+
 
 class ReconUI:
     def __init__(self):
@@ -170,11 +186,16 @@ class ReconUI:
             norm_im = norm_im / (254.0 / max_norm)
             norm_im = norm_im + min_norm
 
+        # TODO: Add actual denoise code here. This function defines the whole post-processing pipeline
+        # You can choose any order of steps for what's approprite. Note tha this is done dynamically 
+        # as the user scrolls in the preview. If it takes a long time, we could figure something out. 
+
         return norm_im
 
     def _render_recon(self, slide_value, return_im=False):
         norm_im = self.cur_recon[slide_value]
         norm_im = self._norm_recon(norm_im)
+
 
         fig, ax = plt.subplots(figsize=(15, 1.5))
         ax.hist(norm_im.flatten(), bins=100)
@@ -210,6 +231,7 @@ class ReconUI:
 
         pprint.pp(self.export_params())
 
+
         if return_im:
             return norm_im, hist_im
         else:
@@ -218,9 +240,9 @@ class ReconUI:
 
     def update_recon_slide(self, slide_value):
         return self._render_recon(slide_value)
+    
 
-
-    def _reconstruct(self, recon_algorithm, norm, center_offset, recon_slice=None, return_im=False):
+    def _reconstruct_pre(self, recon_slice=None):
         if self.cur_projs is None:
             self.cur_projs = copy.deepcopy(self.loaded_scans)
             self.crop = [0, self.cur_projs.projs.shape[1], 0, self.cur_projs.projs.shape[2]]
@@ -262,7 +284,46 @@ class ReconUI:
             wf = wf[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
             df = df[:, recon_slice[0]:recon_slice[0] + recon_slice[1], :]
 
+        return projs, wf, df
 
+    def _reconstruct_midas(self, projs, wf, df, md_params, center_offset):
+        self.recon_center_offset = center_offset
+        self.norm_projs = projs
+        df = df.mean(axis=0)
+        wf_split = wf.shape[0] // 2
+        wf_start = wf[wf_split:]
+        wf_end = wf[:wf_split]
+        wf_midas = np.asarray([wf_start.mean(axis=0), wf_end.mean(axis=0)])
+        midas_theta = np.degrees(self.cur_projs.omega)
+
+        md_wd = os.path.join(os.getcwd(), MD_WD)
+        if not os.path.exists(md_wd):
+            os.mkdir(md_wd)
+
+        print(md_params)
+        self.cur_recon = midas_tomo.run_tomo(data=projs,
+                                   dark=df,
+                                   whites=wf_midas,
+                                   workingdir=md_wd,
+                                   thetas=midas_theta,
+                                   shifts=float(center_offset),
+                                   filterNr=md_params.filter_num,
+                                   doLog=md_params.do_log,
+                                   extraPad=md_params.extra_pad,
+                                   autoCentering=md_params.auto_center,
+                                   numCPUs=40,
+                                   doCleanup=1,
+                                   ringRemoval=md_params.ring_remove)
+        self.cur_recon = np.squeeze(self.cur_recon)
+    
+
+    def _reconstruct_post(self, return_im):
+        sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
+        im_update, hist_update = self._render_recon(0, return_im)
+        return im_update, hist_update, sl_update
+
+
+    def _reconstruct_tomopy(self, projs, wf, df, norm, center_offset):
         if norm  != 'None':
             if norm == 'TomoPy':
                 projs = tomopy.normalize(projs, wf, df)
@@ -270,28 +331,64 @@ class ReconUI:
             elif norm == 'Standard':
                 projs = projs / wf.mean(axis=0)
                             
-        projs = projs * -4
+        #projs = projs * -4
         options = {'proj_type': 'linear', 'method': 'FBP_CUDA'}
         center = (self.cur_projs.projs.shape[2] // 2) - self.crop[2] + center_offset
-        self.recon_center_offset = center_offset
+
         self.cur_recon = tomopy.recon(projs[:-1],
                             self.cur_projs.omega[:-1],
                             center=center,
                             algorithm=tomopy.astra,
                             options=options,
                             ncore=20)
-        self.cur_recon = self.cur_recon
-        
-        sl_update = gr.Slider.update(minimum=0, maximum=self.cur_recon.shape[0]-1, value=0, interactive=True)
-        im_update, hist_update = self._render_recon(0, return_im)
+
+
+    def _reconstruct(self, 
+                     recon_algorithm, 
+                     norm, 
+                     center_offset, 
+                     md_params,
+                     recon_slice=None, 
+                     return_im=False):
+
+        projs, wf, df = self._reconstruct_pre(recon_slice)
+
+        if recon_algorithm == ALGO_MIDAS:
+            self._reconstruct_midas(projs, wf, df, md_params, center_offset)
+        elif recon_algorithm == ALGO_TOMOPY:
+            self._reconstruct_tomopy(projs, wf, df, norm, center_offset)
+
+        im_update, hist_update, sl_update = self._reconstruct_post(return_im)
         return im_update, hist_update, sl_update
 
 
-    def reconstruct_all(self, slide_value, norm, center_offset):
-        return self._reconstruct(slide_value, norm, center_offset)
+    def reconstruct_all(self, 
+                        norm, 
+                        center_offset,
+                        recon_alg, 
+                        md_filter_num, 
+                        md_extra_pad, 
+                        md_auto_center, 
+                        md_do_log, 
+                        md_ring_remove):
+        
+        md_params = MDParams(md_filter_num, md_extra_pad, md_auto_center, md_do_log, md_ring_remove)
+        return self._reconstruct(recon_alg, norm, center_offset, md_params)
 
-    def reconstruct_slice(self, slide_value, norm, center_offset, slice_start, slice_num):
-        return self._reconstruct(slide_value, norm, center_offset, recon_slice=[slice_start, slice_num])
+    def reconstruct_slice(self, 
+                          norm, 
+                          center_offset, 
+                          slice_start, 
+                          slice_num,
+                          recon_alg,
+                          md_filter_num,
+                          md_extra_pad,
+                          md_auto_center,
+                          md_do_log,
+                          md_ring_remove):
+                          
+        md_params = MDParams(md_filter_num, md_extra_pad, md_auto_center, md_do_log, md_ring_remove)
+        return self._reconstruct(recon_alg, norm, center_offset, md_params, recon_slice=[slice_start, slice_num])
         
     def apply_filters(self, slide_value, 
                       is_clip, clip_lower, clip_upper,
@@ -305,6 +402,9 @@ class ReconUI:
 
         self.recon_is_denoise = is_denoise
         self.recon_denoise_params = [template_window, search_window]
+    
+        #TODO: Add parameters here. Can be hard coded or passed in as a parameter from a ui element. 
+        #TODO: Save them as class variables. They are accessed in the _render_recon function. 
 
         return self._render_recon(slide_value=slide_value)
         
@@ -312,13 +412,22 @@ class ReconUI:
 
     def update_center_render(self, is_visible):
         return gr.Gallery.update(visible=is_visible)
+
+    def update_algo_param_render(self, algorithm):
+        if algorithm == ALGO_MIDAS:
+            return [gr.Column.update(visible=True), gr.Column.update(visible=True), gr.Radio.update(visible=False)]
+        elif algorithm == ALGO_TOMOPY:
+            return [gr.Column.update(visible=False), gr.Column.update(visible=False), gr.Radio.update(visible=True)]
     
 
-    def render_center(self, recon_slice, norm):
+    def render_center(self, recon_alg, recon_slice, norm, 
+                      md_filter_num, md_extra_pad, md_auto_center,
+                      md_do_log, md_ring_remove):
+        md_params = MDParams(md_filter_num, md_extra_pad, md_auto_center, md_do_log, md_ring_remove)
         CENTERS = list(range(-10, 11))
         center_ims = []
         for center in CENTERS:
-            im, _, _ = self._reconstruct(0, norm, center, recon_slice=[recon_slice, 1], return_im=True)
+            im, _, _ = self._reconstruct(recon_alg, norm, center, md_params, recon_slice=[recon_slice, 2], return_im=True)
             center_ims.append((im, str(center)))
 
         return gr.Gallery.update(value=center_ims)
@@ -413,13 +522,24 @@ class ReconUI:
 
                     with gr.Column():
                         # Reset slider on recon
-                        norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy')
+                        recon_alg = gr.Radio(label='Algorithm', choices=[ALGO_MIDAS, ALGO_TOMOPY], value=ALGO_MIDAS)
+
+                        with gr.Row() as midas_params_0:
+                            md_filter_num = gr.Number(label="Filter Num", precision=0, value=2)
+                            md_extra_pad = gr.Number(label="Extra Padding", precision=0, value=0)
+
+                        with gr.Row() as midas_params_1:
+                            md_auto_center = gr.Checkbox(label='Autocenter', value=True)
+                            md_do_log = gr.Checkbox(label='Use Log Scale', value=True)
+                            md_ring_remove = gr.Checkbox(label='Ring Removal', value=True)
+
+                        norm_rdo = gr.Radio(label='Normalization', choices=['TomoPy', 'Standard', 'None'], value='TomoPy', visible=False)
                         center_num = gr.Number(label='Center Offset', precision=0, value=0)
 
                         with gr.Row():
                             recon_slice_btn = gr.Button("Reconstruct Slice")
                             recon_slice_start = gr.Number(label="Slice Start", precision=0, value=500)
-                            recon_slice_num = gr.Number(label="Num Slices", precision=0, value=5)
+                            recon_slice_num = gr.Number(label="Num Slices", precision=0, value=6)
                         recon_btn = gr.Button('Reconstruct All')
 
                         with gr.Row():
@@ -435,12 +555,13 @@ class ReconUI:
                             denoise_ckbx = gr.Checkbox(label='Enable Denoise', value=False)
                             template_wdw_num = gr.Number(label='Template Window', precision=0, value=DEFAULTS['denoise_search'])
                             search_wdw_num = gr.Number(label='Search Window', precision=0, value=DEFAULTS['denoise_template'])
+
+                        #TODO: IF you want to add ui elements, add them here. 
                         
                         apply_filters_btn = gr.Button('Apply Filters')
 
                         
                         with gr.Row():
-                            # TODO: 16 bit int out
                             export_btn = gr.Button('Export Scans')
                             export_fld = gr.Textbox(label='Export Location', value='recon/test')
                         export_txt = gr.Textbox(label='Export Progress', interactive=False)
@@ -480,6 +601,15 @@ class ReconUI:
                                             proj_ys_num, proj_ye_num]
             )
 
+            recon_alg.change(fn=self.update_algo_param_render,
+                             inputs=recon_alg,
+                             outputs=[
+                                midas_params_0,
+                                midas_params_1,
+                                norm_rdo
+                             ])
+
+
             proj_slide.change(fn=self.update_proj_slide,
                                 inputs=proj_slide,
                                 outputs=proj_img)
@@ -499,11 +629,14 @@ class ReconUI:
                                 outputs=[recon_img, recon_dist])
 
             recon_btn.click(fn=self.reconstruct_all,
-                                inputs=[recon_slide, norm_rdo, center_num],
+                                inputs=[norm_rdo, center_num, recon_alg, md_filter_num, 
+                                        md_extra_pad, md_auto_center, md_do_log, md_ring_remove],
                                 outputs=[recon_img, recon_dist, recon_slide])
 
             recon_slice_btn.click(fn=self.reconstruct_slice,
-                                inputs=[recon_slide, norm_rdo, center_num, recon_slice_start, recon_slice_num],
+                                inputs=[norm_rdo, center_num, recon_slice_start, 
+                                        recon_slice_num, recon_alg, md_filter_num, md_extra_pad, md_auto_center,
+                                        md_do_log, md_ring_remove],
                                 outputs=[recon_img, recon_dist, recon_slide])
 
             # Center Rendering
@@ -513,12 +646,13 @@ class ReconUI:
                                       outputs=center_render_imgrid)
             
             center_render_btn.click(fn=self.render_center,
-                                    inputs=[center_slice, norm_rdo],
+                                    inputs=[recon_alg, center_slice, norm_rdo, md_filter_num,
+                                        md_extra_pad, md_auto_center, md_do_log, md_ring_remove],
                                     outputs=center_render_imgrid
             )
 
             # Modifications
-             
+            # TODO: Add additional ui input values here.  
             apply_filters_btn.click(fn=self.apply_filters, inputs=[recon_slide,
                                             clip_ckbx, clip_low, clip_high,
                                             circ_ckbx, circ_ratio,
